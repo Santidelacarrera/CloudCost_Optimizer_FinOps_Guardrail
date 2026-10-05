@@ -82,3 +82,12 @@ class ImportIn(BaseModel):
     filename: str = Field(min_length=1, max_length=200, pattern=r"^[^/\\\x00]+$")
     csv_text: str = Field(min_length=10, max_length=2_500_000)
     repository_id: UUID | None = None
+
+
+class ExpenseFileIn(BaseModel):
+    filename: str = Field(min_length=1, max_length=200, pattern=r"^[^/\\\x00]+$")
+    csv_text: str = Field(min_length=5, max_length=1_500_000)
+
+
+class ExpenseAnalyzeIn(BaseModel):
+    files: list[ExpenseFileIn] = Field(min_length=1, max_length=12)

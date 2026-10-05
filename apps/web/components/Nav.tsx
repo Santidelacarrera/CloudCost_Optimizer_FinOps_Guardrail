@@ -13,6 +13,7 @@ export default function Nav() {
       <Link href="/">Panel</Link>
       <Link href="/recommendations">Recomendaciones</Link>
       <Link href="/import">Importar CSV</Link>
+      <Link href="/expenses">Analizar gastos</Link>
       <Link href="/audit">Auditoría</Link>
       <span className="sp" />
       <button className="secondary" onClick={logout}>Salir</button>

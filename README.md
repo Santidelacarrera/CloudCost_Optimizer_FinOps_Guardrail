@@ -49,6 +49,10 @@ Sin `DATABASE_URL` las pruebas de integración se omiten.
 ## Importar un CSV (sin conectar AWS)
 En la UI, **Importar CSV**: descarga la plantilla, rellénala con una fila por recurso (EC2, EBS o snapshots) con su uso y costo, y súbela. Se aplican las mismas reglas, políticas, aprobaciones y PR. Excel: *Guardar como → CSV UTF-8*. Límites: 5000 filas / 2 MB. Un presupuesto genérico sin recursos ni uso no permite detectar desperdicio. API: `POST /api/v1/imports`.
 
+## Analizar gastos (gastos comunes, presupuestos, cualquier CSV de costos)
+En la UI, **Analizar gastos**: sube uno o varios CSV (un mes por archivo, o una columna `mes`). Entiende informes con secciones y filas «Sub-Total/Total» (típico de gastos comunes) y tablas planas `descripción;monto[;categoría][;mes]`, con `;` `,` tab o `|`, montos `$1.234.567` o `1,234.56`, y UTF-8 o Windows-1252.
+Reglas deterministas (sin IA): cuadratura de subtotales y totales, cobros idénticos repetidos, mismo concepto repetido, posible mismo beneficiario en dos secciones, concentración por sección, partida dominante y, con varios meses, alzas/bajas ≥15 %, partidas nuevas y desaparecidas. Los hallazgos son pistas para revisar con el monto involucrado, no ahorros garantizados. El contenido **no se guarda** (suele traer nombres y sueldos): la auditoría registra solo cifras agregadas. API: `POST /api/v1/expenses/analyze` (roles ADMIN/FINOPS/SRE).
+
 ## Uso real con AWS y GitHub
 Ver [docs/runbook.md](docs/runbook.md) (rol IAM de solo lectura con Terraform en `infrastructure/terraform/aws-readonly-role`, token y webhook de GitHub, OIDC).
 

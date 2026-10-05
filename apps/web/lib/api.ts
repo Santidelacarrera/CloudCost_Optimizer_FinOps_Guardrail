@@ -31,3 +31,6 @@ export const usd = (v: string | number | null | undefined) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(v ?? 0));
 export const pct = (v: string | number) => `${Math.round(Number(v) * 100)} %`;
 export const fmtDate = (s: string) => new Date(s).toLocaleString("es-ES");
+export const clp = (v: string | number | null | undefined) =>
+  new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(Number(v ?? 0));
+export const pct1 = (v: string | number) => `${(Number(v) * 100).toFixed(1).replace(".", ",")} %`;

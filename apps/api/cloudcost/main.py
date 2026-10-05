@@ -11,7 +11,7 @@ from prometheus_client import make_asgi_app
 from . import db
 from .config import get_settings
 from .logging_config import configure_logging
-from .routers import admin, audit, dashboard, dev, imports, recommendations, scans, webhooks
+from .routers import admin, audit, dashboard, dev, expenses, imports, recommendations, scans, webhooks
 from .services.recommendations import WorkflowError
 from .telemetry import setup_tracing
 
@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=503, content={"status": "db_unavailable"})
         return {"status": "ready"}
 
-    for module in (scans, recommendations, audit, dashboard, admin, webhooks, imports):
+    for module in (scans, recommendations, audit, dashboard, admin, webhooks, imports, expenses):
         app.include_router(module.router, prefix="/api/v1")
     if settings.auth_mode == "dev" and settings.env != "production":
         app.include_router(dev.router, prefix="/api/v1")
