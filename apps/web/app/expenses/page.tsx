@@ -1,14 +1,26 @@
 "use client";
 import { Fragment, useState } from "react";
-import { api, clp, pct1 } from "@/lib/api";
+import { api, clp, money, pct1 } from "@/lib/api";
 
 type Finding = { rule: string; severity: "alert" | "review" | "info"; title: string; detail: string; amount: string | null; statement: string | null };
-type Item = { label: string; amount: string; share: string };
-type Section = { name: string; total: string; share: string; item_count: number; items: Item[] };
+type Item = { label: string; amount: string; share: string; note?: string | null; doc?: string | null; date?: string | null; group?: string | null };
+type Group = { name: string; total: string; share: string; item_count: number };
+type Section = { name: string; total: string; share: string; item_count: number; items: Item[]; groups?: Group[] };
 type Check = { kind: string; label: string; section: string | null; declared: string; computed: string; ok: boolean };
 type Statement = { filename: string; period: string | null; title: string | null; total: string; item_count: number; sections: Section[]; checks: Check[]; warnings: string[] };
+type Month = { n: number; label: string; period: string; contract: string | null; projected: string | null; real: string | null };
+type Project = {
+  filename: string;
+  summary: {
+    currency: string; contract: string; last_ep?: number; last_month?: string; real_cumulative?: string; projected_cumulative?: string;
+    real_progress?: string; projected_progress?: string; gap?: string; gap_share?: string; remaining?: string; eta?: string; planned_end?: string | null;
+    months: Month[];
+  };
+  checks: { label: string; declared: string; computed: string; ok: boolean }[];
+};
 type Result = {
   statements: Statement[];
+  projects: Project[];
   findings: Finding[];
   total_findings: number;
   checks: { passed: number; failed: number };
@@ -45,11 +57,12 @@ export default function ExpensesPage() {
 
   return (
     <>
-      <h1>Analizar gastos</h1>
+      <h1>Analizar documentos financieros</h1>
       <div className="card">
-        <p>Sube un CSV de gastos (gastos comunes, presupuesto, listado de costos) y obtén una revisión automática:
-          si los subtotales cuadran, cobros repetidos, posibles pagos dobles, dónde se concentra el gasto y, si subes varios meses, qué subió o apareció.</p>
-        <p className="muted">Sirve cualquier CSV con una descripción y un monto por fila (con o sin secciones y subtotales). Si tu archivo es Excel, usa <i>Guardar como → CSV</i>.
+        <p>Sube un CSV y obtén una revisión automática. Reconoce <b>gastos comunes y presupuestos</b> (tablas planas o informes con secciones, subtotales y detalle por documento:
+          si las cifras cuadran, cobros repetidos, posibles pagos dobles, cobros atípicos, dónde se concentra el gasto y, con varios meses, qué subió o apareció)
+          y <b>estados de pago de obra</b> (avance real vs proyectado, anticipo, atraso y proyección de término).</p>
+        <p className="muted">Si tu archivo es Excel, usa <i>Guardar como → CSV</i>.
           Puedes subir varios meses a la vez para compararlos. El contenido <b>no se guarda</b>: se analiza en memoria y en la auditoría solo quedan cifras agregadas.
           Los hallazgos son pistas para revisar, no conclusiones: que un gasto sobre o no depende de contexto que el archivo no trae.</p>
         <div className="grid" style={{ gridTemplateColumns: "1fr", maxWidth: 520 }}>
@@ -63,6 +76,12 @@ export default function ExpensesPage() {
       {res && (
         <>
           <div className="grid" style={{ margin: "12px 0" }}>
+            {res.projects.map((p, i) => (
+              <div className="card kpi" key={`p${i}`}>
+                <div className="v">{money(p.summary.contract, p.summary.currency)}</div>
+                <div className="l">contrato de obra · {p.filename}</div>
+              </div>
+            ))}
             {res.statements.map((s, i) => (
               <div className="card kpi" key={i}>
                 <div className="v">{clp(s.total)}</div>
@@ -110,6 +129,47 @@ export default function ExpensesPage() {
             </>
           )}
 
+          {res.projects.map((p, i) => {
+            const sm = p.summary; const cur = sm.currency;
+            let cr = 0, cp = 0;
+            return (
+              <div key={`proj${i}`}>
+                <h2>Obra · {p.filename}</h2>
+                {sm.real_cumulative && (
+                  <div className="grid" style={{ margin: "12px 0" }}>
+                    <div className="card kpi"><div className="v">{pct1(sm.real_progress ?? 0)}</div><div className="l">avance real acumulado (EP {sm.last_ep} · {sm.last_month})</div></div>
+                    <div className="card kpi"><div className="v">{pct1(sm.projected_progress ?? 0)}</div><div className="l">avance proyectado a la misma fecha</div></div>
+                    <div className="card kpi"><div className={`v ${Number(sm.gap) > 0 ? "err" : ""}`}>{money(sm.gap, cur)}</div><div className="l">{Number(sm.gap) > 0 ? "atraso" : "adelanto"} ({pct1(Math.abs(Number(sm.gap_share ?? 0)))} del contrato)</div></div>
+                    <div className="card kpi"><div className="v">{money(sm.remaining, cur)}</div><div className="l">falta por ejecutar{sm.eta ? ` · término estimado ${sm.eta}` : ""}</div></div>
+                  </div>
+                )}
+                <div className="card" style={{ overflowX: "auto" }}>
+                  <table>
+                    <thead><tr><th>EP</th><th>Mes</th><th style={{ textAlign: "right" }}>Proyectado</th><th style={{ textAlign: "right" }}>Real</th><th style={{ textAlign: "right" }}>Acum. proyectado</th><th style={{ textAlign: "right" }}>Acum. real</th><th style={{ textAlign: "right" }}>Diferencia</th></tr></thead>
+                    <tbody>
+                      {sm.months.filter((m) => m.n > 0).map((m) => {
+                        const hasReal = m.real !== null && Number(m.real) > 0;
+                        cp += Number(m.projected ?? 0); if (hasReal) cr += Number(m.real);
+                        return (
+                          <tr key={m.n}>
+                            <td>{m.n}</td><td>{m.label}</td>
+                            <td style={{ textAlign: "right" }}>{m.projected === null ? "—" : money(m.projected, cur)}</td>
+                            <td style={{ textAlign: "right" }}>{hasReal ? money(m.real, cur) : "—"}</td>
+                            <td style={{ textAlign: "right" }} className="muted">{m.projected === null ? "—" : money(cp, cur)}</td>
+                            <td style={{ textAlign: "right" }} className="muted">{hasReal ? money(cr, cur) : "—"}</td>
+                            <td style={{ textAlign: "right" }} className={hasReal && cp - cr > 0 ? "err" : "muted"}>{hasReal ? money(cp - cr, cur) : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  <p className="muted">Comprobaciones: {p.checks.filter((c) => c.ok).length} de {p.checks.length} cuadran.
+                    {p.checks.filter((c) => !c.ok).map((c) => ` ✗ ${c.label} (${c.declared} de ${c.computed})`).join("")}</p>
+                </div>
+              </div>
+            );
+          })}
+
           {res.statements.map((s, i) => (
             <div key={i}>
               <h2>Detalle {s.period ?? s.filename}</h2>
@@ -121,8 +181,11 @@ export default function ExpensesPage() {
                     {s.sections.map((sec) => (
                       <Fragment key={sec.name}>
                         <tr><td><b>{sec.name}</b></td><td style={{ textAlign: "right" }}><b>{clp(sec.total)}</b></td><td style={{ textAlign: "right" }}><b>{pct1(sec.share)}</b></td></tr>
+                        {sec.groups?.map((g) => (
+                          <tr key={`${sec.name}-g-${g.name}`}><td style={{ paddingLeft: 12 }} className="muted">{g.name} ({g.item_count})</td><td style={{ textAlign: "right" }} className="muted">{clp(g.total)}</td><td style={{ textAlign: "right" }} className="muted">{pct1(g.share)}</td></tr>
+                        ))}
                         {sec.items.map((it, k) => (
-                          <tr key={`${sec.name}-${k}`}><td style={{ paddingLeft: 24 }}>{it.label}</td><td style={{ textAlign: "right" }}>{clp(it.amount)}</td><td style={{ textAlign: "right" }} className="muted">{pct1(it.share)}</td></tr>
+                          <tr key={`${sec.name}-${k}`}><td style={{ paddingLeft: 24 }}>{it.label}{it.note ? <span className="muted"> · {it.note}</span> : null}{it.doc ? <span className="muted"> · doc {it.doc}</span> : null}</td><td style={{ textAlign: "right" }}>{clp(it.amount)}</td><td style={{ textAlign: "right" }} className="muted">{pct1(it.share)}</td></tr>
                         ))}
                       </Fragment>
                     ))}
