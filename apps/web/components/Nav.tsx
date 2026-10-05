@@ -12,6 +12,7 @@ export default function Nav() {
       <b>☁ CloudCost Optimizer</b>
       <Link href="/">Panel</Link>
       <Link href="/recommendations">Recomendaciones</Link>
+      <Link href="/import">Importar CSV</Link>
       <Link href="/audit">Auditoría</Link>
       <span className="sp" />
       <button className="secondary" onClick={logout}>Salir</button>

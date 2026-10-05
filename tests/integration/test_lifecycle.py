@@ -216,3 +216,30 @@ def test_tenant_isolation_and_audit_immutability():
             raise AssertionError(f"{sql} no debe estar permitido para el rol de aplicación")
         except psycopg.errors.InsufficientPrivilege:
             pass
+
+
+def test_csv_import_scan():
+    _require_db()
+    from psycopg.types.json import Jsonb
+
+    from cloudcost.collectors.file_import import TEMPLATE_CSV, parse_csv
+    from cloudcost.db import tenant_tx
+    from cloudcost.secrets import SecretResolver
+    from cloudcost.services import recommendations as recs, scan_service
+
+    parsed = parse_csv(TEMPLATE_CSV)
+    assert not parsed.errors
+    ref = f"file-{uuid4().hex[:6]}"
+    with tenant_tx(ORG) as conn:
+        acc = conn.execute("insert into cloud_accounts (organization_id, provider, account_ref, display_name) "
+                           "values (%s, 'import', %s, 'Archivo importado') returning id", (str(ORG), ref)).fetchone()["id"]
+        conn.execute("insert into imports (organization_id, cloud_account_id, filename, row_count, rows, created_by) "
+                     "values (%s, %s, 'plantilla.csv', %s, %s, 'test')", (str(ORG), str(acc), len(parsed.rows), Jsonb(parsed.rows)))
+        scan_id = conn.execute("insert into scans (organization_id, cloud_account_id, requested_by) values (%s, %s, 'test') returning id",
+                               (str(ORG), str(acc))).fetchone()["id"]
+    stats = scan_service.run_scan(ORG, scan_id, settings=_settings(tempfile.mkdtemp()), secrets=SecretResolver())
+    assert stats["resources_seen"] == 3 and stats["findings"] == 3, stats
+    with tenant_tx(ORG) as conn:
+        items = recs.list_recommendations(conn, limit=100)["items"]
+    titles = " ".join(i["title"] for i in items)
+    assert "web-prod-1" in titles and "legacy-data" in titles and "old-backup" in titles

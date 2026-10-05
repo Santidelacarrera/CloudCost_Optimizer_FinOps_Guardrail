@@ -46,6 +46,9 @@ make test
 ```
 Sin `DATABASE_URL` las pruebas de integración se omiten.
 
+## Importar un CSV (sin conectar AWS)
+En la UI, **Importar CSV**: descarga la plantilla, rellénala con una fila por recurso (EC2, EBS o snapshots) con su uso y costo, y súbela. Se aplican las mismas reglas, políticas, aprobaciones y PR. Excel: *Guardar como → CSV UTF-8*. Límites: 5000 filas / 2 MB. Un presupuesto genérico sin recursos ni uso no permite detectar desperdicio. API: `POST /api/v1/imports`.
+
 ## Uso real con AWS y GitHub
 Ver [docs/runbook.md](docs/runbook.md) (rol IAM de solo lectura con Terraform en `infrastructure/terraform/aws-readonly-role`, token y webhook de GitHub, OIDC).
 
