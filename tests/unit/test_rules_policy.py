@@ -1,9 +1,14 @@
-from cloudcost.domain import policy, risk, savings, state_machine as sm
+from cloudcost.domain import policy, risk, savings
+from cloudcost.domain import state_machine as sm
 from cloudcost.domain.models import NormalizedResource, environment_from_tags, is_protected
 from cloudcost.domain.pricing import instance_monthly_cost, smaller_types
 from cloudcost.domain.rules import (
-    ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE,
-    RuleConfig, evaluate_resource,
+    ACTION_DELETE_SNAPSHOT,
+    ACTION_DELETE_VOLUME,
+    ACTION_REMOVE,
+    ACTION_RESIZE,
+    RuleConfig,
+    evaluate_resource,
 )
 
 CFG = RuleConfig()

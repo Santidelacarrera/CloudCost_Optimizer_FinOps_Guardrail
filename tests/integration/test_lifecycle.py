@@ -49,7 +49,8 @@ def test_full_lifecycle_and_guardrails():
     _require_db()
     from cloudcost.db import tenant_tx
     from cloudcost.secrets import SecretResolver
-    from cloudcost.services import dashboard, recommendations as recs, scan_service, workflow
+    from cloudcost.services import dashboard, scan_service, workflow
+    from cloudcost.services import recommendations as recs
     from cloudcost.services.recommendations import WorkflowError
 
     pr_dir = tempfile.mkdtemp()

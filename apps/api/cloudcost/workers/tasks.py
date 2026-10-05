@@ -47,4 +47,4 @@ def run_scan_task(self, org_id: str, scan_id: str) -> dict:
             scan_service.mark_scan_failed(org, scan, f"{type(exc).__name__}: {exc}")
             return {"status": "FAILED"}
         scan_service.mark_scan_retrying(org, scan, f"{type(exc).__name__}: {exc}")
-        raise self.retry(exc=exc, countdown=min(30 * 2 ** (attempts - 1), 600))
+        raise self.retry(exc=exc, countdown=min(30 * 2 ** (attempts - 1), 600)) from exc

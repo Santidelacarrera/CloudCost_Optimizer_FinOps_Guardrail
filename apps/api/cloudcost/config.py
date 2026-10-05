@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # --- demo
     demo_enabled: bool = True
     demo_iac_dir: str = "/app/example-iac"
-    demo_pr_dir: str = "/tmp/cloudcost-demo-prs"
+    demo_pr_dir: str = "/tmp/cloudcost-demo-prs"  # noqa: S108  (solo demo)
 
     # --- LLM (opcional; apagado por defecto)
     llm_enabled: bool = False

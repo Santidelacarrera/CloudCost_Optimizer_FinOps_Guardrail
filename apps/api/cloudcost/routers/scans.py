@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 @router.post("/scans", status_code=202)
 def create_scan(body: ScanCreate, p: Principal = Depends(require(*SCAN))):
     """Encola un escaneo asíncrono (no bloquea la petición HTTP). Consulta el estado con GET /scans/{id}."""
-    from ..workers.tasks import run_scan_task            # import perezoso: evita cargar Celery en cada import
+    from ..workers.tasks import run_scan_task  # import perezoso: evita cargar Celery en cada import
 
     with tenant_tx(p.org_id) as conn:
         account = conn.execute("select id, status from cloud_accounts where id = %s", (str(body.cloud_account_id),)).fetchone()
