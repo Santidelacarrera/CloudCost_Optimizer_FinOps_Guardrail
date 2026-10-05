@@ -7,8 +7,8 @@ x-api-env: &api-env
   AUTH_MODE: ${AUTH_MODE:-dev}
   JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789-abcdef}
   DEMO_ENABLED: ${DEMO_ENABLED:-true}
-  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-  PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${WEB_PORT:-5985}}
+  PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:${WEB_PORT:-5985}}
   GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
   LLM_ENABLED: ${LLM_ENABLED:-false}
@@ -50,7 +50,7 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
-    ports: ["127.0.0.1:${API_PORT:-8000}:8000"]
+    ports: ["127.0.0.1:${API_PORT:-5986}:8000"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/ready')"]
       interval: 10s
@@ -71,7 +71,7 @@ services:
       DEV_LOGIN: ${AUTH_MODE:-dev}
       INSECURE_COOKIES: "1"      # solo para http://localhost; quítalo detrás de HTTPS
     depends_on: [api]
-    ports: ["127.0.0.1:${WEB_PORT:-3000}:3000"]
+    ports: ["127.0.0.1:${WEB_PORT:-5985}:3000"]
 
 volumes:
   pgdata:
