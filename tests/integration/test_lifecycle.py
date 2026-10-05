@@ -220,12 +220,12 @@ def test_tenant_isolation_and_audit_immutability():
 
 def test_csv_import_scan():
     _require_db()
-    from psycopg.types.json import Jsonb
-
     from cloudcost.collectors.file_import import TEMPLATE_CSV, parse_csv
     from cloudcost.db import tenant_tx
     from cloudcost.secrets import SecretResolver
-    from cloudcost.services import recommendations as recs, scan_service
+    from cloudcost.services import recommendations as recs
+    from cloudcost.services import scan_service
+    from psycopg.types.json import Jsonb
 
     parsed = parse_csv(TEMPLATE_CSV)
     assert not parsed.errors
