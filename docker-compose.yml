@@ -1,0 +1,75 @@
+# Entorno local completo. Uso:  cp .env.example .env && docker compose up --build
+name: cloudcost
+x-api-env: &api-env
+  ENV: ${ENV:-development}
+  DATABASE_URL: postgresql://cloudcost_app:${APP_DB_PASSWORD:-change-me-app}@postgres:5432/cloudcost
+  REDIS_URL: redis://redis:6379/0
+  AUTH_MODE: ${AUTH_MODE:-dev}
+  JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789-abcdef}
+  DEMO_ENABLED: ${DEMO_ENABLED:-true}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:3000}
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+  LLM_ENABLED: ${LLM_ENABLED:-false}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-admin}
+      POSTGRES_DB: cloudcost
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cloudcost"]
+      interval: 5s
+      retries: 20
+    ports: ["127.0.0.1:5432:5432"]
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  migrate:
+    build: { context: ., dockerfile: infrastructure/docker/migrate.Dockerfile }
+    depends_on: { postgres: { condition: service_healthy } }
+    environment:
+      DATABASE_ADMIN_URL: postgresql://postgres:${POSTGRES_PASSWORD:-change-me-admin}@postgres:5432/cloudcost
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-change-me-app}
+      SEED_DEV: ${SEED_DEV:-true}
+    restart: "no"
+
+  api:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    environment: *api-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    ports: ["127.0.0.1:8000:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/ready')"]
+      interval: 10s
+      retries: 10
+
+  worker:
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["celery", "-A", "cloudcost.workers.celery_app", "worker", "-l", "INFO", "--concurrency", "2"]
+    environment: *api-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    build: { context: apps/web }
+    environment:
+      API_URL: http://api:8000
+      DEV_LOGIN: ${AUTH_MODE:-dev}
+    depends_on: [api]
+    ports: ["127.0.0.1:3000:3000"]
+
+volumes:
+  pgdata:

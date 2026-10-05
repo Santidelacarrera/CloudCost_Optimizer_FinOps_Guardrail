@@ -1,0 +1,2 @@
+# ADR-0001: Monolito modular
+**Estado**: aceptada. **Contexto**: la arquitectura objetivo describe muchos servicios; en la Fase 1 el equipo es pequeño y el dominio aún cambia. **Decisión**: un paquete `cloudcost` con módulos aislados (domain, iac, git, llm, collectors, services) desplegado como API + worker. **Consecuencias**: menos operación y transacciones simples; los límites de módulo permiten extraer servicios después.
