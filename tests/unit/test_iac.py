@@ -76,7 +76,7 @@ def test_resize_patch_changes_only_the_attribute():
     block = idx.block_by_address("aws_instance.web")
     result = build_patch(action=ACTION_RESIZE, block=block, index=idx,
                          params={"current_instance_type": "m5.2xlarge", "target_instance_type": "m5.xlarge"})
-    changed = [l for l in result.diff.splitlines() if l[:1] in "+-" and not l.startswith(("+++", "---"))]
+    changed = [ln for ln in result.diff.splitlines() if ln[:1] in "+-" and not ln.startswith(("+++", "---"))]
     assert changed == ['-  instance_type = "m5.2xlarge"', '+  instance_type = "m5.xlarge"']
     assert result.validations[0]["passed"]
     assert "m5.xlarge" in result.new_text and result.new_text.count("m5.2xlarge") == 0

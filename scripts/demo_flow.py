@@ -6,7 +6,7 @@ import time
 
 import requests
 
-API = os.environ.get("API_URL", "http://localhost:8000") + "/api/v1"
+API = os.environ.get("API_URL", "http://localhost:5986") + "/api/v1"
 ACCOUNT, REPO = "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"
 
 

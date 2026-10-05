@@ -46,7 +46,10 @@ class FakeGitHub(BaseHTTPRequestHandler):
             text = s["branches"].get(ref, FILE)
             if "raw" in (self.headers.get("Accept") or ""):
                 data = text.encode()
-                self.send_response(200); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
                 return
             return self._send(200, {"sha": "blobsha", "content": base64.b64encode(text.encode()).decode()})
         if self.path.startswith("/repos/o/r/pulls"):
@@ -134,7 +137,8 @@ def test_errors_do_not_leak_the_token():
 
 
 def test_local_demo_provider_never_touches_originals():
-    import tempfile, pathlib
+    import pathlib
+    import tempfile
     base = pathlib.Path(tempfile.mkdtemp())
     (base / "iac").mkdir()
     (base / "iac/main.tf").write_text(FILE)

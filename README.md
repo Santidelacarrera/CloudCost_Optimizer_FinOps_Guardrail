@@ -29,8 +29,8 @@ Fases posteriores (no incluidas): GitLab, Azure, GCP, Kubernetes/Helm, evaluaci�
 cp .env.example .env            # revisa contraseñas
 docker compose up --build       # postgres, redis, migraciones+seed, api, worker, web
 ```
-- UI: http://localhost:3000 (login de desarrollo: elige rol, p. ej. `FINOPS`)
-- API/Swagger: http://localhost:8000/docs
+- UI: http://localhost:5985 (puertos configurables con `WEB_PORT`/`API_PORT` en `.env`) (login de desarrollo: elige rol, p. ej. `FINOPS`)
+- API/Swagger: http://localhost:5986/docs
 - Pulsa **Ejecutar escaneo** → 10 recursos sintéticos, 6 hallazgos, ≈ USD 777/mes.
 - Flujo por consola: `pip install requests && python scripts/demo_flow.py`
 
