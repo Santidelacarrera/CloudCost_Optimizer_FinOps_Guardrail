@@ -8,6 +8,7 @@ Severidades: alert (probable error, revisar primero) · review (verificar) · in
 from __future__ import annotations
 
 import re
+import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
@@ -23,10 +24,13 @@ _STOP = {"del", "los", "las", "para", "por", "con", "sin", "servicio", "servicio
 class ExpenseConfig:
     tolerance: Decimal = Decimal(1)                  # diferencia aceptada en cuadraturas (redondeos)
     section_share_info: Decimal = Decimal("0.50")    # una sección con ≥50 % del total se reporta como concentración
-    dominant_item_share: Decimal = Decimal("0.80")   # una partida con ≥80 % de su sección (≥3 partidas)
+    dominant_item_share: Decimal = Decimal("0.75")   # una partida con ≥75 % de su grupo/sección (≥3 partidas)
+    outlier_ratio: Decimal = Decimal(10)             # un cobro ≥10× la mediana de los demás del mismo proveedor (≥3 cobros)…
+    outlier_min_share: Decimal = Decimal("0.01")     # …y ≥1 % del total
     top_n: int = 3
     change_pct: Decimal = Decimal("0.15")            # variación mensual relevante: ≥15 %…
     change_min_share: Decimal = Decimal("0.01")      # …y ≥1 % del total del mes anterior
+    min_overlap: Decimal = Decimal("0.25")           # partidas en común mínimas para comparar dos meses
     max_findings: int = 100
 
 
@@ -66,6 +70,11 @@ def _total(items: list[Item]) -> Decimal:
     return sum((i.amount for i in items), ZERO)
 
 
+def _name(i: Item) -> str:
+    base = " ".join(i.label.split())
+    return f"{base} ({' '.join(i.note.split())})" if i.note else base
+
+
 def _tokens(label: str) -> frozenset[str]:
     return frozenset(t for t in re.split(r"[^a-z0-9]+", norm(label)) if len(t) >= 3 and t not in _STOP)
 
@@ -76,7 +85,10 @@ def reconcile(st: Statement, cfg: ExpenseConfig) -> tuple[list[dict], list[Findi
     findings: list[Finding] = []
     last_sub_row: dict[str, int] = {}
     for t in sorted(st.totals, key=lambda x: x.row):
-        if t.kind == "subtotal" and t.section:
+        if t.kind == "group" and t.expected is not None:
+            computed = t.expected
+            scope = "la suma de su detalle"
+        elif t.kind == "subtotal" and t.section:
             lo = last_sub_row.get(t.section, 0)
             computed = _total([i for i in st.items if i.section == t.section and lo < i.row < t.row])
             last_sub_row[t.section] = t.row
@@ -113,14 +125,21 @@ def analyze_statement(st: Statement, cfg: ExpenseConfig) -> tuple[dict, list[Fin
     sections = []
     for name, items in by_section.items():
         s_total = _total(items)
+        by_group: dict[str, list[Item]] = defaultdict(list)
+        for i in items:
+            if i.group:
+                by_group[i.group].append(i)
         sections.append({
             "name": name, "total": str(s_total), "share": str(share(s_total)), "item_count": len(items),
-            "items": [{"label": i.label, "amount": str(i.amount), "share": str(share(i.amount)), "row": i.row}
+            "groups": [{"name": g, "total": str(_total(gi)), "share": str(share(_total(gi))), "item_count": len(gi)}
+                       for g, gi in sorted(by_group.items(), key=lambda kv: _total(kv[1]), reverse=True)],
+            "items": [{"label": i.label, "note": i.note, "doc": i.doc, "date": i.date, "group": i.group,
+                       "amount": str(i.amount), "share": str(share(i.amount)), "row": i.row}
                       for i in sorted(items, key=lambda i: i.amount, reverse=True)],
         })
     sections.sort(key=lambda s: Decimal(s["total"]), reverse=True)
 
-    # Cobros repetidos: mismo concepto más de una vez en el mismo período
+    # Cobros repetidos: mismo proveedor/concepto más de una vez en el mismo período
     groups: dict[str, list[Item]] = defaultdict(list)
     for it in st.items:
         groups[norm(it.label)].append(it)
@@ -128,7 +147,26 @@ def analyze_statement(st: Statement, cfg: ExpenseConfig) -> tuple[dict, list[Fin
         if len(items) < 2:
             continue
         amounts = [i.amount for i in items]
-        name = items[0].label.strip()
+        name = " ".join(items[0].label.split())
+        docs = [i.doc for i in items]
+        if all(docs):
+            # Con N° de documento se puede distinguir una factura repetida de varias facturas del mismo proveedor
+            if len(set(docs)) < len(docs):
+                d = next(x for x in docs if docs.count(x) > 1)
+                same = [i for i in items if i.doc == d]
+                findings.append(Finding(
+                    "DUPLICATE_CHARGE", "alert", f"Mismo documento N° {d} cobrado {len(same)} veces: «{name}»",
+                    f"El documento {d} de «{name}» aparece {len(same)} veces ({', '.join(clp(i.amount) for i in same)}). "
+                    "Probable cobro duplicado: pide la anulación o la devolución.", same[0].amount, label))
+            else:
+                twins = {(a, norm(i.note or "")) for i in items for a in [i.amount] if sum(1 for j in items if j.amount == a and norm(j.note or "") == norm(i.note or "")) > 1}
+                if twins:
+                    a = max(t[0] for t in twins)
+                    findings.append(Finding(
+                        "REPEATED_ITEM", "review", f"Documentos distintos con el mismo monto y concepto: «{name}»",
+                        f"«{name}» tiene {len(items)} documentos y al menos dos por {clp(a)} con la misma descripción. "
+                        "Pueden ser medidores o servicios distintos; verifica que no sea la misma factura emitida dos veces.", a, label))
+            continue
         if len(set(amounts)) < len(amounts):
             dup = max(a for a in amounts if amounts.count(a) > 1)
             findings.append(Finding(
@@ -141,6 +179,47 @@ def analyze_statement(st: Statement, cfg: ExpenseConfig) -> tuple[dict, list[Fin
                 f"Montos: {', '.join(clp(a) for a in amounts)} (suma {clp(sum(amounts, ZERO))}). "
                 "Confirma que corresponden a cuentas o medidores distintos y no a un cobro duplicado; "
                 "si es una sola cuenta, pide que se facture en una línea.", sum(amounts, ZERO), label))
+
+    # Un cobro muy por encima de los demás del mismo proveedor (consumo anómalo, fuga, error de lectura)
+    for items in groups.values():
+        if len(items) < 3:
+            continue
+        med = statistics.median(i.amount for i in items)
+        if med <= 0:
+            continue
+        for i in items:
+            if i.amount >= med * cfg.outlier_ratio and share(i.amount) >= cfg.outlier_min_share:
+                others = [x for x in items if x is not i]
+                findings.append(Finding(
+                    "VENDOR_OUTLIER", "review", f"Cobro muy superior al resto de «{' '.join(i.label.split())}»",
+                    f"{_name(i)}{' · doc ' + i.doc if i.doc else ''}: {clp(i.amount)}, frente a una mediana de {clp(med)} en sus otros "
+                    f"{len(others)} cobros. Revisa si hay una fuga, un error de lectura o un consumo extraordinario (riego, piscina, obra).",
+                    i.amount - med, label))
+
+    # Fondo de reserva: porcentaje declarado en la etiqueta («… (5,00%)») contra lo cobrado, o el porcentaje implícito
+    for i in st.items:
+        if not re.search(r"fondo.*reserva", norm(i.label)):
+            continue
+        base = _total([x for x in st.items if x.row < i.row and not re.search(r"fondo.*reserva", norm(x.label))])
+        if not base:
+            continue
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*%", i.label)
+        if m:
+            rate = Decimal(m[1].replace(",", ".")) / 100
+            expected = (base * rate).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+            ok = abs(expected - i.amount) <= cfg.tolerance
+            checks.append({"kind": "reserve_fund", "label": " ".join(i.label.split()), "section": None,
+                           "declared": str(i.amount), "computed": str(expected), "ok": ok})
+            if not ok:
+                findings.append(Finding(
+                    "RESERVE_FUND", "alert", f"El fondo de reserva no corresponde al {pct(rate)}",
+                    f"Se cobran {clp(i.amount)}, pero {pct(rate)} de {clp(base)} es {clp(expected)} (diferencia {clp(i.amount - expected)}).",
+                    abs(i.amount - expected), label))
+        else:
+            findings.append(Finding(
+                "RESERVE_FUND", "info", f"Fondo de reserva: {pct(i.amount / base)} de los gastos",
+                f"{clp(i.amount)} sobre {clp(base)}. Compáralo con el porcentaje que fijó la asamblea o el reglamento de la comunidad.",
+                i.amount, label))
 
     # Posible mismo beneficiario o concepto pagado en secciones distintas (p. ej. sueldo y «mantención … <nombre>»)
     seen: set[tuple[int, int]] = set()
@@ -169,19 +248,23 @@ def analyze_statement(st: Statement, cfg: ExpenseConfig) -> tuple[dict, list[Fin
             f"{clp(Decimal(top_sec['total']))} de {clp(total)}. Cualquier ahorro relevante pasa por esta sección; "
             "empieza por revisar sus partidas más grandes.", Decimal(top_sec["total"]), label))
     for s in sections:
-        its, s_total = s["items"], Decimal(s["total"])
-        if len(its) >= 3 and s_total > 0 and Decimal(its[0]["amount"]) / s_total >= cfg.dominant_item_share:
-            findings.append(Finding(
-                "DOMINANT_ITEM", "info", f"«{its[0]['label'].strip()}» domina «{s['name']}»",
-                f"Es {pct(Decimal(its[0]['amount']) / s_total)} de la sección ({clp(Decimal(its[0]['amount']))}). "
-                "Es la partida donde un cambio (tarifa, consumo, proveedor) tiene más efecto.", Decimal(its[0]["amount"]), label))
+        buckets: dict[str, list[dict]] = defaultdict(list)
+        for it in s["items"]:
+            buckets[it.get("group") or s["name"]].append(it)
+        for bname, its in buckets.items():
+            b_total = sum((Decimal(x["amount"]) for x in its), ZERO)
+            if len(its) >= 3 and b_total > 0 and Decimal(its[0]["amount"]) / b_total >= cfg.dominant_item_share:
+                findings.append(Finding(
+                    "DOMINANT_ITEM", "info", f"«{its[0]['label'].strip()}» domina «{bname}»",
+                    f"Es {pct(Decimal(its[0]['amount']) / b_total)} de {clp(b_total)} ({clp(Decimal(its[0]['amount']))}). "
+                    "Es la partida donde un cambio (tarifa, consumo, proveedor) tiene más efecto.", Decimal(its[0]["amount"]), label))
     ranked = sorted(st.items, key=lambda i: i.amount, reverse=True)
     if len(ranked) >= 5:
         top = ranked[: cfg.top_n]
         s = _total(top)
         findings.append(Finding(
             "TOP_ITEMS", "info", f"Las {cfg.top_n} mayores partidas suman {pct(share(s))} del total",
-            "; ".join(f"{i.label.strip()} {clp(i.amount)}" for i in top) + ".", s, label))
+            "; ".join(f"{_name(i)} {clp(i.amount)}" for i in top) + ".", s, label))
 
     if neg := [i for i in st.items if i.amount < 0]:
         findings.append(Finding(
@@ -209,12 +292,23 @@ def compare(statements: list[Statement], cfg: ExpenseConfig) -> tuple[dict | Non
     if len(statements) < 2:
         return None, []
     findings: list[Finding] = []
+    compared = 0
     maps = [_by_label(s) for s in statements]
     labels = [_label(s) for s in statements]
     totals = [_total(s.items) for s in statements]
     for n in range(1, len(statements)):
         prev, cur, p_lbl, c_lbl = maps[n - 1], maps[n], labels[n - 1], labels[n]
         p_tot, c_tot = totals[n - 1], totals[n]
+        union = set(prev) | set(cur)
+        overlap = Decimal(len(set(prev) & set(cur))) / Decimal(len(union)) if union else ZERO
+        if overlap < cfg.min_overlap:
+            findings.append(Finding(
+                "COMPARISON_MISMATCH", "review", f"{p_lbl} y {c_lbl} parecen de presupuestos o comunidades distintos",
+                f"Solo {pct(overlap)} de las partidas coinciden entre ambos archivos, así que no se comparan partida a partida "
+                "(las alzas y bajas no serían válidas). Si son del mismo edificio, revisa que los nombres de las partidas sean los mismos.",
+                None, c_lbl))
+            continue
+        compared += 1
         floor = abs(p_tot) * cfg.change_min_share
         if p_tot:
             delta = c_tot - p_tot
@@ -242,6 +336,8 @@ def compare(statements: list[Statement], cfg: ExpenseConfig) -> tuple[dict | Non
                 findings.append(Finding("DROPPED_ITEM", "info", f"Partida que desaparece: «{name}»",
                                         f"Estaba en {p_lbl} por {clp(amt)} y ya no aparece en {c_lbl}. "
                                         "Si era un gasto fijo, confirma que no quedó pendiente de cobro.", abs(amt), c_lbl))
+    if not compared:
+        return None, findings
     all_keys: dict[str, str] = {}
     for m in maps:
         for k, (name, _) in m.items():

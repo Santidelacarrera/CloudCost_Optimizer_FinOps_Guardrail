@@ -34,3 +34,5 @@ export const fmtDate = (s: string) => new Date(s).toLocaleString("es-ES");
 export const clp = (v: string | number | null | undefined) =>
   new Intl.NumberFormat("es-CL", { style: "currency", currency: "CLP", maximumFractionDigits: 0 }).format(Number(v ?? 0));
 export const pct1 = (v: string | number) => `${(Number(v) * 100).toFixed(1).replace(".", ",")} %`;
+export const money = (v: string | number | null | undefined, cur = "CLP") =>
+  cur === "UF" ? `UF ${new Intl.NumberFormat("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v ?? 0))}` : clp(v);
