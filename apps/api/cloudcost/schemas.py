@@ -76,3 +76,9 @@ class RepositoryIn(BaseModel):
 class DevTokenIn(BaseModel):
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     role: Literal["ADMIN", "FINOPS", "SRE", "DEVELOPER", "AUDITOR", "VIEWER"]
+
+
+class ImportIn(BaseModel):
+    filename: str = Field(min_length=1, max_length=200, pattern=r"^[^/\\\x00]+$")
+    csv_text: str = Field(min_length=10, max_length=2_500_000)
+    repository_id: UUID | None = None

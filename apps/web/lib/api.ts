@@ -17,7 +17,12 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   if (r.status === 401 && typeof window !== "undefined") window.location.href = "/login";
   if (!r.ok) {
     const d = data?.detail;
-    throw new ApiError(r.status, typeof d === "string" ? d : Array.isArray(d) ? d.map((x: any) => x.msg).join("; ") : `Error ${r.status}`, data?.code);
+    const msg =
+      typeof d === "string" ? d
+      : Array.isArray(d) ? d.map((x: any) => x.msg).join("; ")
+      : d && typeof d === "object" ? [d.message, ...(Array.isArray(d.errors) ? d.errors : [])].filter(Boolean).join("\n")
+      : `Error ${r.status}`;
+    throw new ApiError(r.status, msg, data?.code);
   }
   return data as T;
 }
