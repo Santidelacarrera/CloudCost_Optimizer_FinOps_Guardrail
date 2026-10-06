@@ -30,7 +30,7 @@ async def lifespan(_: FastAPI):
 
 
 def _route_template(request: Request) -> str:
-    """Plantilla de la ruta atendida (p. ej. /api/v1/recommendations/{rec_id}): cardinalidad acotada para las métricas."""
+    """Plantilla de la ruta atendida (p. ej. /recommendations/{rec_id}, sin el prefijo /api/v1): cardinalidad acotada para las métricas."""
     route = request.scope.get("route")
     if route is None:                                   # según la versión, el enrutador no deja la ruta en el scope
         for candidate in request.app.router.routes:

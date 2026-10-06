@@ -93,6 +93,6 @@ def test_metrics_count_requests_and_auth_failures(client):
     text = client.get("/metrics/").text
     requests = [ln for ln in text.splitlines() if ln.startswith("http_requests_total")]
     assert 'auth_failures_total{code="invalid_credentials"}' in text
-    assert any('route="/api/v1/auth/login"' in ln and 'status="401"' in ln and 'method="POST"' in ln for ln in requests), requests
+    assert any('route="/auth/login"' in ln and 'status="401"' in ln and 'method="POST"' in ln for ln in requests), requests
     assert "http_request_duration_seconds_bucket" in text
     assert not any("/metrics" in ln for ln in requests), requests

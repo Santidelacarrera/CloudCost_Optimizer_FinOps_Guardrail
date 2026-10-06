@@ -95,7 +95,7 @@ test("2FA: activa con una app de autenticación y entrega 10 códigos de recuper
 });
 
 test("2FA: el login pide el código y no acepta reutilizar uno ya usado", async ({ page }) => {
-  await logout(page);
+  // Cada prueba tiene su propio navegador limpio: aquí no hay sesión previa.
   await login(page, EMAIL, PASSWORD);
   await expect(page).toHaveURL(/\/mfa/);
 
@@ -162,6 +162,12 @@ test("recuperación: restablece la contraseña por correo y la antigua deja de s
 });
 
 test("sesiones: la pantalla de cuenta lista esta sesión", async ({ page }) => {
+  await login(page, EMAIL, NEW_PASSWORD);
+  await expect(page).toHaveURL(/\/mfa/);
+  await page.getByRole("button", { name: "Usar un código de recuperación" }).click();
+  await page.locator("#code").fill(recovery[2]);
+  await page.getByRole("button", { name: "Verificar" }).click();
+  await atPanel(page);
   await page.goto("/account");
   await expect(page.getByRole("heading", { name: "Sesiones activas" })).toBeVisible();
   await expect(page.getByText("Esta sesión")).toBeVisible();
