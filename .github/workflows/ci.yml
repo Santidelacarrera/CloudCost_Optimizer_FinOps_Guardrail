@@ -26,7 +26,17 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - run: ruff check apps tests
       - run: SEED_DEV=true sh scripts/migrate.sh
-      - run: pytest -q
+      - name: pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -q -rf --tb=short 2>&1 | tee pytest.log
+      - name: Resumen de fallos como anotación (los registros no siempre son descargables)
+        if: failure()
+        shell: bash
+        run: |
+          summary=$(grep -E "^(FAILED|ERROR)|^E  |^tests/.*Error" pytest.log | head -30 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=pytest::${summary}"
 
   web:
     runs-on: ubuntu-latest
@@ -42,6 +52,7 @@ jobs:
   e2e:
     # Recorrido completo en un navegador real: registro, correo, login, 2FA, recuperación de contraseña y cabeceras de seguridad.
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16
@@ -101,7 +112,16 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Ejecutar las pruebas
         working-directory: apps/web
-        run: npx playwright test
+        shell: bash
+        run: |
+          set -o pipefail
+          npx playwright test 2>&1 | tee "$GITHUB_WORKSPACE/e2e.log"
+      - name: Resumen de fallos como anotación
+        if: failure()
+        shell: bash
+        run: |
+          summary=$( { tail -n 60 api.log | grep -E "ERROR|Traceback|Error" | tail -n 8; grep -E "✘|Error:|Expected|Received|Timeout|waiting for|locator" e2e.log | head -n 25; } | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::error title=e2e::${summary}"
       - name: Guardar informes y registros si falla
         if: failure()
         uses: actions/upload-artifact@v4
@@ -112,6 +132,7 @@ jobs:
             apps/web/test-results
             api.log
             web.log
+            e2e.log
           if-no-files-found: ignore
 
   backups:
