@@ -6,10 +6,21 @@
 - **Sin auto-merge ni despliegue**: la plataforma crea PRs; el merge y el despliegue son de tu repo/CI. Destructivo en producción ⇒ aprobación reforzada.
 - **Auditoría inmutable**: sin UPDATE/DELETE/TRUNCATE para el rol de aplicación (permisos + triggers), cadena sha256 verificable.
 - **Multi-tenant**: RLS `FORCE` con `app.current_org` por transacción; rol `cloudcost_app` sin superusuario ni BYPASSRLS.
-- **AuthN/Z**: dev = JWT HS256 local; producción = OIDC/JWKS (la configuración falla al arrancar si `ENV=production` con auth dev o demo activa). Roles: ADMIN, FINOPS, SRE, DEVELOPER, AUDITOR, VIEWER.
-- **Web**: token en cookie `httpOnly` + `SameSite=Strict`, BFF con comprobación de origen, CSP y cabeceras de seguridad.
+- **AuthN/Z**: tres modos. `dev` = JWT HS256 local; `local` = cuentas propias (abajo); `oidc` = IdP externo por JWKS. La configuración falla al arrancar si `ENV=production` con auth dev o demo activa. Roles: ADMIN, FINOPS, SRE, DEVELOPER, AUDITOR, VIEWER.
+- **Web**: token en cookie `httpOnly` + `SameSite=Strict` (con HTTPS, prefijo `__Host-`), BFF con comprobación de origen, CSP y cabeceras de seguridad. El navegador nunca ve el token de sesión.
 - **Webhook**: HMAC SHA-256 con comparación en tiempo constante; `org_id` en la URL solo fija el tenant.
 - **`/metrics`**: restringe a red interna en el ingress. **Swagger** se desactiva en producción.
 
+## Cuentas propias (`AUTH_LOCAL_ENABLED`)
+- **Contraseñas**: scrypt (N=2^15, r=8, p=3) sobre HMAC-SHA256 con un *pepper* del servidor (`AUTH_PEPPER`, fuera de la base): un volcado de la tabla no basta para atacarlas offline. Sal propia, formato autodescriptivo y re-hash automático si suben los parámetros. Política: ≥12 caracteres, rechaza contraseñas comunes, secuencias, repeticiones y datos personales; opcional `AUTH_HIBP_ENABLED` (k-anonimato, falla abierto). Como mucho 4 scrypt simultáneos para que un ataque de volumen no agote la memoria.
+- **Sin enumeración de cuentas**: el registro, el login y la recuperación responden igual exista o no el correo (hash de relleno para igualar tiempos; el correo se envía en segundo plano).
+- **Bloqueo progresivo**: 5 fallos seguidos → 30 s, 60 s, 2 min… hasta 15 min, por cuenta (también para correos inexistentes) y límites por IP, registrados en la base (valen con varias réplicas). El bloqueo no se alarga mientras dura.
+- **Sesiones**: token opaco `ccs_…` de 256 bits; en la base solo su sha256. Caducidad absoluta (12 h) e inactividad (2 h), revocables, máx. 10 activas; cambiar o restablecer la contraseña cierra las demás.
+- **2FA TOTP** (RFC 6238) con anti-reutilización del intervalo, secreto cifrado en reposo (AES-256-GCM, clave derivada del pepper, ligado a la cuenta) y 10 códigos de recuperación de un solo uso (solo su HMAC en la base). Desactivarlo o regenerar códigos exige contraseña y segundo factor. Tras la contraseña se emite una sesión `mfa_pending` de 10 min que no sirve para la API.
+- **Correo**: enlaces de un solo uso con hash en la base (confirmar 24 h, recuperar 1 h, invitar 7 días); la confirmación se hace con un botón (los antivirus que abren enlaces no la consumen). Avisos por cambios de contraseña/2FA.
+- **Aislamiento**: tablas con RLS `FORCE`; el módulo de autenticación opera con `app.auth='on'` y la gestión de equipo corre dentro del tenant. Los códigos de recuperación y los intentos solo los ve el módulo de autenticación. Auditoría: alta, confirmación, login, bloqueo, 2FA, cambios de contraseña/sesiones/equipo; nunca contraseñas ni códigos.
+- **IP de cliente**: con `AUTH_TRUST_FORWARDED=true` la API toma la **última** entrada de `X-Forwarded-For`. Úsalo solo si la API únicamente es alcanzable por el BFF o un proxy propio que sobrescriba esa cabecera (en `docker-compose.yml` el puerto de la API solo se publica en 127.0.0.1).
+- **Una cuenta pertenece a una organización**; una invitación solo sirve para el correo invitado.
+
 ## Pendiente para producción
-Configurar OIDC real (la ruta `/api/session` de la UI es solo de desarrollo), TLS en el ingress, rotación de secretos, backups de Postgres y revisión de CSP.
+Con cuentas propias: `ENV=production` exige `AUTH_PEPPER` propio (≥32), `SMTP_HOST` y `PUBLIC_WEB_URL` https; guarda el pepper en un gestor de secretos y no lo rotes sin un plan (invalida contraseñas y 2FA). Coloca el BFF detrás de TLS y de un proxy que fije `X-Forwarded-For`. Limpia `DEV_LOGIN` (la ruta `/api/session` es solo de desarrollo). La CSP permite `'unsafe-inline'` en scripts porque las páginas son estáticas; pasar a nonces exige renderizado dinámico. Pendiente: rotación de secretos, backups de Postgres, y WebAuthn/passkeys como siguiente factor.

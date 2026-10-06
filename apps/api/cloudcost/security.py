@@ -10,6 +10,7 @@ from uuid import UUID
 import jwt
 from fastapi import Depends, HTTPException, Request
 
+from .auth.crypto import SESSION_PREFIX
 from .config import Settings, get_settings
 
 ROLES = ("ADMIN", "FINOPS", "SRE", "DEVELOPER", "AUDITOR", "VIEWER")
@@ -27,10 +28,14 @@ READ = ROLES
 
 @dataclass(frozen=True)
 class Principal:
-    user_id: str          # claim "sub"
+    user_id: str          # claim "sub" (cuentas propias: "acct:<uuid>")
     email: str | None
     org_id: UUID
     role: str
+    name: str | None = None
+    account_id: str | None = None       # solo con sesión de cuenta propia
+    session_id: str | None = None
+    mfa_enabled: bool = False
 
 
 @lru_cache
@@ -46,6 +51,8 @@ def mint_dev_token(settings: Settings, *, email: str, role: str, org_id: str | N
 
 
 def decode_token(token: str, settings: Settings) -> Principal:
+    if settings.auth_mode == "local":
+        raise HTTPException(401, "Sesión inválida o expirada", headers={"WWW-Authenticate": "Bearer"})
     try:
         if settings.auth_mode == "dev":
             claims = jwt.decode(token, settings.jwt_secret.get_secret_value(), algorithms=["HS256"],
@@ -70,7 +77,31 @@ def get_principal(request: Request, settings: Settings = Depends(get_settings)) 
     scheme, _, token = header.partition(" ")
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(401, "Falta el token Bearer", headers={"WWW-Authenticate": "Bearer"})
+    if token.startswith(SESSION_PREFIX):                 # sesión de una cuenta propia (token opaco, se valida en la base)
+        if not settings.auth_local_enabled:
+            raise HTTPException(401, "Sesión inválida o expirada", headers={"WWW-Authenticate": "Bearer"})
+        return _session_principal(token, settings)
     return decode_token(token, settings)
+
+
+def _session_principal(token: str, settings: Settings) -> Principal:
+    from .services import accounts
+
+    row = accounts.authenticate_session(settings, token)
+    if row is None:
+        raise HTTPException(401, "Sesión inválida o expirada", headers={"WWW-Authenticate": "Bearer"})
+    if row["kind"] != "active":
+        raise HTTPException(401, "Falta la verificación en dos pasos", headers={"WWW-Authenticate": "Bearer"})
+    return Principal(user_id=f"acct:{row['account_id']}", email=row["email"], org_id=UUID(str(row["organization_id"])), role=row["role"],
+                     name=row["full_name"], account_id=str(row["account_id"]), session_id=str(row["session_id"]),
+                     mfa_enabled=bool(row["mfa"]))
+
+
+def require_session(principal: Principal = Depends(get_principal)) -> Principal:
+    """Acciones de cuenta (contraseña, 2FA, sesiones): exigen una sesión de cuenta propia, no un token de desarrollo o de un IdP."""
+    if not principal.session_id:
+        raise HTTPException(403, "Esta acción requiere iniciar sesión con una cuenta de CloudCost")
+    return principal
 
 
 def require(*roles: str) -> Callable[[Principal], Principal]:

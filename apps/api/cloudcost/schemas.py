@@ -91,3 +91,78 @@ class ExpenseFileIn(BaseModel):
 
 class ExpenseAnalyzeIn(BaseModel):
     files: list[ExpenseFileIn] = Field(min_length=1, max_length=12)
+
+
+# ---------------------------------------------------------------- cuentas propias
+_EMAIL = r"^[^@\s]{1,64}@[^@\s]+\.[^@\s]+$"
+Role = Literal["ADMIN", "FINOPS", "SRE", "DEVELOPER", "AUDITOR", "VIEWER"]
+
+
+class _EmailModel(BaseModel):
+    email: str = Field(max_length=254, pattern=_EMAIL)
+
+    @field_validator("email")
+    @classmethod
+    def _norm(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class SignupIn(_EmailModel):
+    password: str = Field(min_length=1, max_length=1024)
+    full_name: str = Field(min_length=1, max_length=120)
+    organization_name: str | None = Field(default=None, max_length=120)
+    invite_token: str | None = Field(default=None, max_length=200)
+
+    @field_validator("full_name", "organization_name")
+    @classmethod
+    def _strip(cls, v: str | None) -> str | None:
+        return v.strip() if isinstance(v, str) else v
+
+
+class LoginIn(_EmailModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class MfaVerifyIn(BaseModel):
+    pending_token: str = Field(min_length=10, max_length=200)
+    code: str = Field(min_length=6, max_length=32)
+
+
+class TokenIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+
+
+class EmailIn(_EmailModel):
+    pass
+
+
+class ResetPasswordIn(BaseModel):
+    token: str = Field(min_length=10, max_length=200)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class ChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+
+class MfaSetupIn(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class MfaEnableIn(BaseModel):
+    code: str = Field(min_length=6, max_length=12)
+
+
+class MfaConfirmIn(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+    code: str = Field(min_length=6, max_length=32)
+
+
+class InviteIn(_EmailModel):
+    role: Role
+
+
+class MemberPatchIn(BaseModel):
+    role: Role | None = None
+    disabled: bool | None = None

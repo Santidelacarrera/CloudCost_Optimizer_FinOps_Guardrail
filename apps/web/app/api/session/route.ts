@@ -1,30 +1,26 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { SESSION_COOKIE, callApi, clearCookie, json, sameOrigin, setCookie } from "@/lib/server/bff";
 
-const API = process.env.API_URL ?? "http://localhost:8000";
 const DEV_LOGIN = (process.env.DEV_LOGIN ?? "dev") === "dev";
 
-// Login de desarrollo: pide un token al backend y lo guarda en una cookie httpOnly (el navegador nunca lo ve en JS).
-// En producción (AUTH_MODE=oidc) sustituye esta ruta por el flujo OIDC de tu proveedor.
+// SOLO DESARROLLO (AUTH_MODE=dev): pide un token de demostración y lo guarda en la misma cookie httpOnly que las cuentas reales.
+// Con cuentas propias u OIDC esta ruta responde 404.
 export async function POST(req: NextRequest) {
-  if (!DEV_LOGIN) return NextResponse.json({ detail: "Login de desarrollo deshabilitado" }, { status: 404 });
+  if (!DEV_LOGIN) return json({ detail: "Login de desarrollo deshabilitado" }, 404);
+  if (!sameOrigin(req)) return json({ detail: "Origen no permitido" }, 403);
   const body = await req.json().catch(() => null);
-  if (!body?.email || !body?.role) return NextResponse.json({ detail: "email y role requeridos" }, { status: 400 });
-  const r = await fetch(`${API}/api/v1/dev/token`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: body.email, role: body.role }),
-  });
-  if (!r.ok) return NextResponse.json({ detail: "No se pudo iniciar sesión" }, { status: r.status });
+  if (!body?.email || !body?.role) return json({ detail: "email y role requeridos" }, 400);
+  const r = await callApi("dev/token", { method: "POST", body: JSON.stringify({ email: body.email, role: body.role }) });
+  if (!r.ok) return json({ detail: "No se pudo iniciar sesión" }, r.status);
   const { access_token } = await r.json();
-  const res = NextResponse.json({ ok: true });
-  res.cookies.set("cc_token", access_token, {
-    httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIES !== "1",
-    path: "/", maxAge: 8 * 3600,
-  });
+  const res = json({ ok: true });
+  setCookie(res, SESSION_COOKIE, access_token, 8 * 3600);
   return res;
 }
 
-export async function DELETE() {
-  const res = NextResponse.json({ ok: true });
-  res.cookies.delete("cc_token");
+export async function DELETE(req: NextRequest) {
+  if (!sameOrigin(req)) return json({ detail: "Origen no permitido" }, 403);
+  const res = json({ ok: true });
+  clearCookie(res, SESSION_COOKIE);
   return res;
 }

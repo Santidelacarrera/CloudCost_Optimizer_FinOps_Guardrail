@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import PageHead from "@/components/PageHead";
 
 type Repo = { id: string; full_name: string; provider: string };
 
@@ -35,7 +36,7 @@ export default function ImportPage() {
 
   return (
     <>
-      <h1>Importar archivo CSV</h1>
+      <PageHead title="Importar CSV" sub="Una fila por recurso, con su uso y su costo. Se aplican las mismas reglas, políticas y aprobaciones que en un escaneo." />
       <div className="card">
         <p>Sube un CSV con <b>una fila por recurso</b> (instancias EC2, volúmenes EBS o snapshots) incluyendo uso (CPU/memoria) y costo.
           Se aplican las mismas reglas, políticas y aprobaciones que en un escaneo normal. Si tu archivo es un Excel, usa <i>Guardar como → CSV UTF-8</i>.</p>
@@ -51,8 +52,8 @@ export default function ImportPage() {
           </select>
           <button onClick={submit} disabled={!file || busy}>{busy ? "Analizando…" : "Analizar archivo"}</button>
         </div>
-        {msg && <p className={ok ? "" : "err"} style={{ whiteSpace: "pre-wrap" }}>{msg}</p>}
-        {ok && <p><Link href="/recommendations">Ver recomendaciones →</Link></p>}
+        {msg && <p className={`note ${ok ? "ok" : "bad"}`} role={ok ? "status" : "alert"} style={{ marginTop: 14 }}>{msg}</p>}
+        {ok && <p><Link href="/recommendations">Ver recomendaciones</Link></p>}
         <p className="muted">Para generar el Pull Request, los recursos deben poder vincularse con tu Terraform (por ID o por la etiqueta Name).</p>
       </div>
     </>

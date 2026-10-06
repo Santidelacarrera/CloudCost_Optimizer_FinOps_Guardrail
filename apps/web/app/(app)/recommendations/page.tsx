@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, pct, usd } from "@/lib/api";
 import type { Rec } from "@/lib/types";
 import Badge from "@/components/Badge";
+import PageHead from "@/components/PageHead";
 
 const STATUSES = ["", "PENDING_APPROVAL", "PROPOSED", "APPROVED", "PR_CREATED", "MERGED", "DEPLOYED", "VERIFIED", "REJECTED"];
 
@@ -20,12 +21,12 @@ export default function Recommendations() {
   }, [status, risk]);
   return (
     <>
-      <h1>Recomendaciones</h1>
-      <div className="row" style={{ marginBottom: 12, maxWidth: 420 }}>
+      <PageHead title="Recomendaciones" sub="Cada una explica la evidencia y espera la decisión de una persona antes de convertirse en un Pull Request." />
+      <div className="row" style={{ marginBottom: 16, maxWidth: 440 }}>
         <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Estado">{STATUSES.map((s) => <option key={s} value={s}>{s || "Todos los estados"}</option>)}</select>
         <select value={risk} onChange={(e) => setRisk(e.target.value)} aria-label="Riesgo">{["", "LOW", "MEDIUM", "HIGH"].map((s) => <option key={s} value={s}>{s || "Todo riesgo"}</option>)}</select>
       </div>
-      {err && <p className="err">{err}</p>}
+      {err && <p className="note bad" role="alert" style={{ marginBottom: 18 }}>{err}</p>}
       <div className="card">
         <table>
           <thead><tr><th>Recurso</th><th>Acción</th><th>Entorno</th><th>Riesgo</th><th>Conf.</th><th>Estado</th><th>Ahorro/mes</th></tr></thead>
@@ -38,7 +39,7 @@ export default function Recommendations() {
                 <td><Badge value={r.status} kind="" /></td><td>{usd(r.estimated_monthly_savings)}</td>
               </tr>
             ))}
-            {items.length === 0 && <tr><td colSpan={7} className="muted">Sin resultados.</td></tr>}
+            {items.length === 0 && <tr><td colSpan={7} className="empty">Sin resultados con esos filtros.</td></tr>}
           </tbody>
         </table>
       </div>
