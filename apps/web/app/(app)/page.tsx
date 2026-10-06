@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api, usd } from "@/lib/api";
 import type { Summary } from "@/lib/types";
 import Badge from "@/components/Badge";
+import PageHead from "@/components/PageHead";
 
 type Scan = { id: string; status: string; stats: Record<string, number> | null; created_at: string; error: string | null };
 const ACCOUNT = "22222222-2222-2222-2222-222222222222";   // cuenta demo del seed; en uso real, selecciónala desde /cloud-accounts
@@ -31,19 +32,17 @@ export default function Dashboard() {
 
   return (
     <>
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <h1>Panel FinOps</h1>
-        <button onClick={scan} disabled={busy}>{busy ? "Encolando…" : "Ejecutar escaneo"}</button>
-      </div>
-      {err && <p className="err">{err}</p>}
+      <PageHead title="Panel" sub="Lo que podrías ahorrar este mes, lo que espera tu aprobación y lo que ya se verificó."
+                actions={<button onClick={scan} disabled={busy}>{busy ? "Encolando…" : "Ejecutar escaneo"}</button>} />
+      {err && <p className="note bad" role="alert" style={{ marginBottom: 18 }}>{err}</p>}
       {s && (
         <>
-          <div className="grid">
-            <div className="card kpi"><div className="v">{usd(s.monthly_spend)}</div><div className="l">Gasto mensual inventariado</div></div>
-            <div className="card kpi"><div className="v">{usd(s.potential_savings)}</div><div className="l">Ahorro potencial ({s.savings_pct}%)</div></div>
-            <div className="card kpi"><div className="v">{s.pending_approval}</div><div className="l">Pendientes de aprobación</div></div>
-            <div className="card kpi"><div className="v">{s.high_risk}</div><div className="l">Riesgo alto</div></div>
-            <div className="card kpi"><div className="v">{usd(s.realized_savings)}</div><div className="l">Ahorro verificado{s.realization_pct != null ? ` (${s.realization_pct}% del esperado)` : ""}</div></div>
+          <div className="totals">
+            <div className="total"><div className="v"><span className="mark">{usd(s.potential_savings)}</span></div><div className="l">Ahorro potencial al mes ({s.savings_pct}% del gasto)</div></div>
+            <div className="total"><div className="v">{usd(s.monthly_spend)}</div><div className="l">Gasto mensual inventariado</div></div>
+            <div className="total"><div className="v">{s.pending_approval}</div><div className="l">Pendientes de aprobación</div></div>
+            <div className="total"><div className={`v ${s.high_risk ? "err" : ""}`}>{s.high_risk}</div><div className="l">Con riesgo alto</div></div>
+            <div className="total"><div className="v">{usd(s.realized_savings)}</div><div className="l">Ahorro verificado{s.realization_pct != null ? ` (${s.realization_pct}% de lo esperado)` : ""}</div></div>
           </div>
           <h2>Mayores oportunidades abiertas</h2>
           <div className="card">
@@ -56,7 +55,7 @@ export default function Dashboard() {
                     <td><Badge value={r.status} kind="" /></td><td><Badge value={r.risk} /></td><td>{usd(r.estimated_monthly_savings)}</td>
                   </tr>
                 ))}
-                {s.top_recommendations.length === 0 && <tr><td colSpan={4} className="muted">Sin oportunidades abiertas. Ejecuta un escaneo.</td></tr>}
+                {s.top_recommendations.length === 0 && <tr><td colSpan={4} className="empty">Sin oportunidades abiertas. Ejecuta un escaneo para buscarlas.</td></tr>}
               </tbody>
             </table>
           </div>

@@ -3,6 +3,7 @@ import { use, useCallback, useEffect, useState } from "react";
 import { api, fmtDate, pct, usd } from "@/lib/api";
 import type { RecDetail } from "@/lib/types";
 import Badge from "@/components/Badge";
+import PageHead from "@/components/PageHead";
 
 function Diff({ text }: { text: string }) {
   return (
@@ -28,7 +29,7 @@ export default function Detail({ params }: { params: Promise<{ id: string }> }) 
     try { await api(`recommendations/${id}/${path}`, { method: "POST", body: body ?? {} }); setReason(""); await load(); }
     catch (e: any) { setMsg(e.message); } finally { setBusy(false); }
   };
-  if (!r) return <p className={msg ? "err" : "muted"}>{msg || "Cargando…"}</p>;
+  if (!r) return <p className={msg ? "note bad" : "muted"}>{msg || "Cargando…"}</p>;
 
   const decide = (d: "approve" | "reject") => act(d, { reason, expected_version: r.version });
   const canDecide = r.status === "PENDING_APPROVAL";
@@ -37,16 +38,15 @@ export default function Detail({ params }: { params: Promise<{ id: string }> }) 
 
   return (
     <>
-      <h1>{r.title}</h1>
-      <div className="row"><Badge value={r.status} kind="" /><Badge value={r.risk} /><Badge value={r.priority} kind="" />
+      <PageHead title={r.title} sub={r.summary} />
+      <div className="row" style={{ marginBottom: 22 }}><Badge value={r.status} kind="" /><Badge value={r.risk} /><Badge value={r.priority} kind="" />
         {r.destructive && <Badge value="destructiva" kind="warn" />}
         {r.automation_blocked && <Badge value="automatización bloqueada" kind="bad" />}</div>
-      <p>{r.summary}</p>
-      <div className="grid">
-        <div className="card kpi"><div className="v">{usd(r.estimated_monthly_savings)}</div><div className="l">Ahorro estimado / mes</div></div>
-        <div className="card kpi"><div className="v">{usd(r.current_monthly_cost)} → {usd(r.projected_monthly_cost)}</div><div className="l">Coste actual → proyectado</div></div>
-        <div className="card kpi"><div className="v">{pct(r.confidence)}</div><div className="l">Confianza</div></div>
-        <div className="card kpi"><div className="v">{r.approvals.filter((a) => a.decision === "APPROVED" && a.recommendation_version === r.version).length} / {r.approvals_required}</div><div className="l">Aprobaciones</div></div>
+      <div className="totals">
+        <div className="total"><div className="v"><span className="mark">{usd(r.estimated_monthly_savings)}</span></div><div className="l">Ahorro estimado al mes</div></div>
+        <div className="total"><div className="v">{usd(r.current_monthly_cost)} a {usd(r.projected_monthly_cost)}</div><div className="l">Costo actual y proyectado</div></div>
+        <div className="total"><div className="v">{pct(r.confidence)}</div><div className="l">Confianza</div></div>
+        <div className="total"><div className="v">{r.approvals.filter((a) => a.decision === "APPROVED" && a.recommendation_version === r.version).length} de {r.approvals_required}</div><div className="l">Aprobaciones recibidas</div></div>
       </div>
 
       <h2>Por qué</h2>
@@ -84,7 +84,7 @@ export default function Detail({ params }: { params: Promise<{ id: string }> }) 
           {r.status === "DEPLOYED" && <button disabled={busy} onClick={() => act("verify-savings", {})}>Verificar ahorro</button>}
         </div>
         {!canDecide && !["APPROVED", "PR_CREATED", "MERGED", "DEPLOYED"].includes(r.status) && <p className="muted">Sin acciones disponibles en este estado.</p>}
-        {msg && <p className="err">{msg}</p>}
+        {msg && <p className="note bad" role="alert" style={{ marginTop: 12 }}>{msg}</p>}
         <p className="muted">La plataforma nunca fusiona ni despliega por sí sola: el merge y el despliegue ocurren en tu repositorio/CI.</p>
       </div>
 
@@ -101,7 +101,7 @@ export default function Detail({ params }: { params: Promise<{ id: string }> }) 
       <h2>Aprobaciones</h2>
       <div className="card"><table><tbody>
         {r.approvals.map((a) => <tr key={a.id}><td>{a.email} ({a.approver_role})</td><td><Badge value={a.decision} kind={a.decision === "APPROVED" ? "ok" : "bad"} /></td><td>v{a.recommendation_version}</td><td>{a.reason}</td><td className="muted">{fmtDate(a.created_at)}</td></tr>)}
-        {r.approvals.length === 0 && <tr><td className="muted">Sin decisiones todavía.</td></tr>}
+        {r.approvals.length === 0 && <tr><td className="empty">Sin decisiones todavía.</td></tr>}
       </tbody></table></div>
 
       <h2>Línea de tiempo</h2>

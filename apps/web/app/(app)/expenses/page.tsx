@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useState } from "react";
 import { api, clp, money, pct1 } from "@/lib/api";
+import PageHead from "@/components/PageHead";
 
 type Finding = { rule: string; severity: "alert" | "review" | "info"; title: string; detail: string; amount: string | null; statement: string | null };
 type Item = { label: string; amount: string; share: string; note?: string | null; doc?: string | null; date?: string | null; group?: string | null };
@@ -57,7 +58,7 @@ export default function ExpensesPage() {
 
   return (
     <>
-      <h1>Analizar documentos financieros</h1>
+      <PageHead title="Analizar gastos" sub="Sube un CSV y recibe una revisión automática: si las cifras cuadran, cobros repetidos, gastos atípicos y avance de obra." />
       <div className="card">
         <p>Sube un CSV y obtén una revisión automática. Reconoce <b>gastos comunes y presupuestos</b> (tablas planas o informes con secciones, subtotales y detalle por documento:
           si las cifras cuadran, cobros repetidos, posibles pagos dobles, cobros atípicos, dónde se concentra el gasto y, con varios meses, qué subió o apareció)
@@ -70,29 +71,29 @@ export default function ExpensesPage() {
                  onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
           <button onClick={submit} disabled={!files.length || busy}>{busy ? "Analizando…" : `Analizar ${files.length > 1 ? `${files.length} archivos` : "archivo"}`}</button>
         </div>
-        {msg && <p className="err" style={{ whiteSpace: "pre-wrap" }}>{msg}</p>}
+        {msg && <p className="note bad" role="alert" style={{ marginTop: 14 }}>{msg}</p>}
       </div>
 
       {res && (
         <>
-          <div className="grid" style={{ margin: "12px 0" }}>
+          <div className="totals">
             {res.projects.map((p, i) => (
-              <div className="card kpi" key={`p${i}`}>
+              <div className="total" key={`p${i}`}>
                 <div className="v">{money(p.summary.contract, p.summary.currency)}</div>
                 <div className="l">contrato de obra · {p.filename}</div>
               </div>
             ))}
             {res.statements.map((s, i) => (
-              <div className="card kpi" key={i}>
+              <div className="total" key={i}>
                 <div className="v">{clp(s.total)}</div>
                 <div className="l">{s.period ?? s.filename} · {s.item_count} partidas</div>
               </div>
             ))}
-            <div className="card kpi">
+            <div className="total">
               <div className={`v ${res.checks.failed ? "err" : ""}`}>{res.checks.passed} / {res.checks.passed + res.checks.failed}</div>
               <div className="l">subtotales y totales que cuadran</div>
             </div>
-            <div className="card kpi"><div className="v">{res.total_findings}</div><div className="l">hallazgos para revisar</div></div>
+            <div className="total"><div className="v"><span className="mark">{res.total_findings}</span></div><div className="l">hallazgos para revisar</div></div>
           </div>
 
           <h2>Hallazgos</h2>
@@ -136,11 +137,11 @@ export default function ExpensesPage() {
               <div key={`proj${i}`}>
                 <h2>Obra · {p.filename}</h2>
                 {sm.real_cumulative && (
-                  <div className="grid" style={{ margin: "12px 0" }}>
-                    <div className="card kpi"><div className="v">{pct1(sm.real_progress ?? 0)}</div><div className="l">avance real acumulado (EP {sm.last_ep} · {sm.last_month})</div></div>
-                    <div className="card kpi"><div className="v">{pct1(sm.projected_progress ?? 0)}</div><div className="l">avance proyectado a la misma fecha</div></div>
-                    <div className="card kpi"><div className={`v ${Number(sm.gap) > 0 ? "err" : ""}`}>{money(sm.gap, cur)}</div><div className="l">{Number(sm.gap) > 0 ? "atraso" : "adelanto"} ({pct1(Math.abs(Number(sm.gap_share ?? 0)))} del contrato)</div></div>
-                    <div className="card kpi"><div className="v">{money(sm.remaining, cur)}</div><div className="l">falta por ejecutar{sm.eta ? ` · término estimado ${sm.eta}` : ""}</div></div>
+                  <div className="totals">
+                    <div className="total"><div className="v">{pct1(sm.real_progress ?? 0)}</div><div className="l">avance real acumulado (EP {sm.last_ep} · {sm.last_month})</div></div>
+                    <div className="total"><div className="v">{pct1(sm.projected_progress ?? 0)}</div><div className="l">avance proyectado a la misma fecha</div></div>
+                    <div className="total"><div className={`v ${Number(sm.gap) > 0 ? "err" : ""}`}>{money(sm.gap, cur)}</div><div className="l">{Number(sm.gap) > 0 ? "atraso" : "adelanto"} ({pct1(Math.abs(Number(sm.gap_share ?? 0)))} del contrato)</div></div>
+                    <div className="total"><div className="v">{money(sm.remaining, cur)}</div><div className="l">falta por ejecutar{sm.eta ? ` · término estimado ${sm.eta}` : ""}</div></div>
                   </div>
                 )}
                 <div className="card" style={{ overflowX: "auto" }}>

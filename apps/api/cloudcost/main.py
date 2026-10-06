@@ -12,6 +12,8 @@ from . import db
 from .config import get_settings
 from .logging_config import configure_logging
 from .routers import admin, audit, dashboard, dev, expenses, imports, recommendations, scans, webhooks
+from .routers import auth as auth_router
+from .services.accounts import AuthError
 from .services.recommendations import WorkflowError
 from .telemetry import setup_tracing
 
@@ -32,7 +34,7 @@ def create_app() -> FastAPI:
                   docs_url=None if settings.env == "production" else "/docs",
                   redoc_url=None, openapi_url=None if settings.env == "production" else "/openapi.json")
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origin_list, allow_credentials=False,
-                       allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
+                       allow_methods=["GET", "POST", "PATCH", "DELETE"], allow_headers=["Authorization", "Content-Type"])
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -45,6 +47,16 @@ def create_app() -> FastAPI:
     @app.exception_handler(WorkflowError)
     async def workflow_error(_: Request, exc: WorkflowError):
         return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
+
+    @app.exception_handler(AuthError)
+    async def auth_error(_: Request, exc: AuthError):
+        body: dict = {"detail": exc.message, "code": exc.code}
+        if exc.errors:
+            body["errors"] = exc.errors
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        if exc.retry_after:
+            body["retry_after"] = exc.retry_after
+        return JSONResponse(status_code=exc.status, content=body, headers=headers)
 
     @app.get("/health", tags=["ops"])
     def health():
@@ -60,6 +72,7 @@ def create_app() -> FastAPI:
 
     for module in (scans, recommendations, audit, dashboard, admin, webhooks, imports, expenses):
         app.include_router(module.router, prefix="/api/v1")
+    app.include_router(auth_router.router, prefix="/api/v1")
     if settings.auth_mode == "dev" and settings.env != "production":
         app.include_router(dev.router, prefix="/api/v1")
     app.mount("/metrics", make_asgi_app())         # restringir a la red interna en el ingress (ver docs/security.md)

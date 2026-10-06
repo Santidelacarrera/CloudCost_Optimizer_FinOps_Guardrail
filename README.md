@@ -29,7 +29,7 @@ Fases posteriores (no incluidas): GitLab, Azure, GCP, Kubernetes/Helm, evaluaci�
 cp .env.example .env            # revisa contraseñas
 docker compose up --build       # postgres, redis, migraciones+seed, api, worker, web
 ```
-- UI: http://localhost:5985 (puertos configurables con `WEB_PORT`/`API_PORT` en `.env`) (login de desarrollo: elige rol, p. ej. `FINOPS`)
+- UI: http://localhost:5985 (puertos configurables con `WEB_PORT`/`API_PORT` en `.env`). Crea tu cuenta desde **Crear cuenta** (sin servidor de correo, el enlace de confirmación aparece en pantalla) o entra con la demostración de desarrollo (elige rol, p. ej. `FINOPS`).
 - API/Swagger: http://localhost:5986/docs
 - Pulsa **Ejecutar escaneo** → 10 recursos sintéticos, 6 hallazgos, ≈ USD 777/mes.
 - Flujo por consola: `pip install requests && python scripts/demo_flow.py`
@@ -45,6 +45,9 @@ export DATABASE_URL=postgresql://cloudcost_app:pw2@localhost:5432/cloudcost DATA
 make test
 ```
 Sin `DATABASE_URL` las pruebas de integración se omiten.
+
+## Cuentas, seguridad y equipo
+Registro con organización propia, confirmación de correo, inicio de sesión con bloqueo progresivo, verificación en dos pasos (aplicación de autenticación + códigos de recuperación), sesiones revocables, recuperación de contraseña e invitaciones con rol. Desde la UI: **Cuenta y seguridad** y **Equipo** (solo administración). Detalle técnico y variables (`AUTH_PEPPER`, `SMTP_*`…) en [docs/security.md](docs/security.md). Diseño: tema claro "papel contable"; las tipografías (Bricolage Grotesque e Instrument Sans, licencia OFL) van incluidas en `apps/web/app/fonts`.
 
 ## Importar un CSV (sin conectar AWS)
 En la UI, **Importar CSV**: descarga la plantilla, rellénala con una fila por recurso (EC2, EBS o snapshots) con su uso y costo, y súbela. Se aplican las mismas reglas, políticas, aprobaciones y PR. Excel: *Guardar como → CSV UTF-8*. Límites: 5000 filas / 2 MB. Un presupuesto genérico sin recursos ni uso no permite detectar desperdicio. API: `POST /api/v1/imports`.

@@ -17,7 +17,20 @@ class Settings(BaseSettings):
     public_web_url: str = "http://localhost:3000"
 
     # --- autenticación
-    auth_mode: Literal["dev", "oidc"] = "dev"
+    auth_mode: Literal["dev", "oidc", "local"] = "dev"   # dev: tokens de desarrollo · oidc: IdP externo · local: solo cuentas propias
+    auth_local_enabled: bool = True                      # cuentas propias (registro, contraseña, MFA) además del modo anterior
+    auth_pepper: SecretStr = SecretStr("dev-only-pepper-change-me-0123456789abcdef")   # secreto del servidor para hashes y cifrado de MFA
+    auth_session_hours: int = 12                         # caducidad absoluta de la sesión
+    auth_session_idle_minutes: int = 120                 # caducidad por inactividad
+    auth_mfa_issuer: str = "CloudCost"
+    auth_hibp_enabled: bool = False                      # rechaza contraseñas filtradas (consulta k-anonimato a haveibeenpwned.com)
+    auth_trust_forwarded: bool = False                   # confiar en X-Forwarded-For (solo detrás del BFF o de un proxy propio)
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: SecretStr | None = None
+    smtp_from: str = "CloudCost <no-reply@localhost>"
+    smtp_starttls: bool = True
     jwt_secret: SecretStr = SecretStr("dev-only-secret-change-me-0123456789")      # HS256, solo AUTH_MODE=dev
     oidc_issuer: str | None = None
     oidc_audience: str | None = None
@@ -59,12 +72,20 @@ class Settings(BaseSettings):
     def _production_guards(self) -> "Settings":
         if self.env == "production":
             problems = []
-            if self.auth_mode != "oidc":
-                problems.append("AUTH_MODE debe ser 'oidc' en producción")
-            if not (self.oidc_jwks_url and self.oidc_issuer and self.oidc_audience):
-                problems.append("OIDC_JWKS_URL, OIDC_ISSUER y OIDC_AUDIENCE son obligatorios en producción")
+            if self.auth_mode == "dev":
+                problems.append("AUTH_MODE no puede ser 'dev' en producción (usa 'local' u 'oidc')")
+            if self.auth_mode == "oidc" and not (self.oidc_jwks_url and self.oidc_issuer and self.oidc_audience):
+                problems.append("OIDC_JWKS_URL, OIDC_ISSUER y OIDC_AUDIENCE son obligatorios con AUTH_MODE=oidc")
             if self.demo_enabled:
                 problems.append("DEMO_ENABLED debe ser false en producción")
+            if self.auth_local_enabled or self.auth_mode == "local":
+                pepper = self.auth_pepper.get_secret_value()
+                if len(pepper) < 32 or pepper.startswith("dev-only"):
+                    problems.append("AUTH_PEPPER debe ser un secreto propio de al menos 32 caracteres")
+                if not self.smtp_host:
+                    problems.append("SMTP_HOST es obligatorio: sin correo no hay verificación ni recuperación de contraseña")
+                if not self.public_web_url.startswith("https://"):
+                    problems.append("PUBLIC_WEB_URL debe ser https:// en producción")
             if problems:
                 raise ValueError("; ".join(problems))
         if self.auth_mode == "dev" and len(self.jwt_secret.get_secret_value()) < 32:

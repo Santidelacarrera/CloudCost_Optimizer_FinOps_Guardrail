@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api, fmtDate } from "@/lib/api";
 import type { AuditEvent } from "@/lib/types";
+import PageHead from "@/components/PageHead";
 
 export default function Audit() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
@@ -13,9 +14,9 @@ export default function Audit() {
   }, []);
   return (
     <>
-      <h1>Auditoría inmutable</h1>
-      {chain && <p className={chain.ok ? "" : "err"}>{chain.ok ? `✔ Cadena de hashes íntegra (${chain.checked} eventos verificados)` : `✖ Cadena alterada desde el evento #${chain.first_bad_seq}`}</p>}
-      {err && <p className="err">{err}</p>}
+      <PageHead title="Auditoría" sub="Registro encadenado con hashes: si alguien altera un evento, la cadena deja de cuadrar." />
+      {chain && <p className={`note ${chain.ok ? "ok" : "bad"}`} style={{ marginBottom: 18 }}>{chain.ok ? `Cadena íntegra: ${chain.checked} eventos verificados.` : `Cadena alterada desde el evento #${chain.first_bad_seq}.`}</p>}
+      {err && <p className="note bad" role="alert" style={{ marginBottom: 18 }}>{err}</p>}
       <div className="card">
         <table>
           <thead><tr><th>#</th><th>Fecha</th><th>Evento</th><th>Actor</th><th>Entidad</th><th>Hash</th></tr></thead>
