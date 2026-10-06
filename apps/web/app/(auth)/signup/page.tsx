@@ -16,8 +16,12 @@ export default function Signup() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState<Done | null>(null);
   const [resent, setResent] = useState(false);
+  const [signupOpen, setSignupOpen] = useState(true);
 
-  useEffect(() => { setInvite(new URLSearchParams(window.location.search).get("invite")); }, []);
+  useEffect(() => {
+    setInvite(new URLSearchParams(window.location.search).get("invite"));
+    authApi<{ signup_open?: boolean }>("config").then((c) => setSignupOpen(c.signup_open !== false)).catch(() => null);
+  }, []);
 
   const strong = checkPassword(password, [email, name]).rules.every((r) => r.ok);
   const submit = async (e: React.FormEvent) => {
@@ -66,6 +70,15 @@ export default function Signup() {
     );
   }
 
+  if (!signupOpen && !invite) {
+    return (
+      <div className="slip">
+        <h1>El registro está cerrado</h1>
+        <p className="sub">Por ahora solo se crean cuentas por invitación. Pídele a quien administra tu organización que te invite desde la sección Equipo.</p>
+        <Link className="btn block" href="/login">Ir a iniciar sesión</Link>
+      </div>
+    );
+  }
   return (
     <div className="slip">
       <h1>{invite ? "Únete a tu equipo" : "Crea tu cuenta"}</h1>

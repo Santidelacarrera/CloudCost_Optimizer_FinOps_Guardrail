@@ -1,0 +1,71 @@
+# Reglas de alerta de Prometheus. Cárgalas con docker-compose.prod.yml --profile monitoring (o monta este archivo en tu Prometheus).
+groups:
+  - name: cloudcost-disponibilidad
+    rules:
+      - alert: ApiCaida
+        expr: up{job="cloudcost-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "La API de CloudCost no responde"
+          description: "Prometheus no puede leer /metrics de la API desde hace 2 minutos. Revisa `docker compose ps` y los logs de api."
+      - alert: WorkerCaido
+        expr: up{job="cloudcost-worker"} == 0
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "El worker de escaneos no responde"
+          description: "Los escaneos quedarán en cola hasta que vuelva."
+      - alert: ErroresDelServidor
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+          and sum(rate(http_requests_total[5m])) > 0.05
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "Más del 5 % de las peticiones terminan en error 5xx"
+          description: "Mira los logs de la API (cada línea lleva el id de petición) y /ready para saber si la base de datos responde."
+      - alert: LatenciaAlta
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "El 5 % de las peticiones más lentas tarda más de 2 s"
+          description: "Revisa la carga de la base de datos y los inicios de sesión simultáneos (el hash de contraseñas limita a 4 en paralelo por proceso)."
+
+  - name: cloudcost-seguridad
+    rules:
+      - alert: PosibleRellenoDeCredenciales
+        expr: sum(rate(auth_failures_total{code="invalid_credentials"}[5m])) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Más de 1 intento fallido de acceso por segundo sostenido"
+          description: "Puede ser un ataque de relleno de credenciales. La API ya bloquea por cuenta y por IP; revisa el origen en la auditoría y considera bloquearlo en el proxy."
+      - alert: MuchosBloqueosDeCuenta
+        expr: increase(auth_failures_total{code="locked"}[15m]) > 20
+        labels: { severity: warning }
+        annotations:
+          summary: "Más de 20 bloqueos por intentos fallidos en 15 minutos"
+          description: "Un pico de bloqueos suele indicar un ataque dirigido o un fallo que deja a usuarios legítimos sin entrar."
+      - alert: LimiteDeRegistrosSuperado
+        expr: increase(auth_failures_total{code="rate_limited"}[1h]) > 30
+        labels: { severity: info }
+        annotations:
+          summary: "Se están rechazando muchos registros o correos por límite de frecuencia"
+          description: "Si no es una campaña tuya, alguien está probando el formulario de registro o de recuperación."
+
+  - name: cloudcost-negocio
+    rules:
+      - alert: EscaneosFallando
+        expr: increase(scans_total{status="failed"}[1h]) > 3
+        labels: { severity: warning }
+        annotations:
+          summary: "Más de 3 escaneos fallidos en la última hora"
+          description: "GET /api/v1/scans/{id} muestra el error y los reintentos."
+      - alert: ErroresDeApiCloud
+        expr: increase(cloud_api_errors_total[30m]) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "La API del proveedor cloud está devolviendo errores"
+          description: "Revisa permisos del rol de solo lectura, límites de peticiones o una caída del proveedor."

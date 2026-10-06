@@ -84,3 +84,15 @@ def test_admin_endpoints_require_admin_and_a_real_session(client):
 
 def test_responses_are_not_cacheable(client):
     assert client.get("/api/v1/auth/config").headers["cache-control"] == "no-store"
+
+
+def test_metrics_count_requests_and_auth_failures(client):
+    """Alimentan las alertas (infrastructure/docker/alerts.yml): errores de acceso y tráfico por plantilla de ruta."""
+    bad = client.post("/api/v1/auth/login", json={"email": _email(), "password": "Clave-Equivocada-77!"})
+    assert bad.status_code == 401
+    text = client.get("/metrics/").text
+    requests = [ln for ln in text.splitlines() if ln.startswith("http_requests_total")]
+    assert 'auth_failures_total{code="invalid_credentials"}' in text
+    assert any('route="/auth/login"' in ln and 'status="401"' in ln and 'method="POST"' in ln for ln in requests), requests
+    assert "http_request_duration_seconds_bucket" in text
+    assert not any("/metrics" in ln for ln in requests), requests

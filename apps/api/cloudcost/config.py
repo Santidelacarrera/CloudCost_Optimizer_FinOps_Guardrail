@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     auth_pepper: SecretStr = SecretStr("dev-only-pepper-change-me-0123456789abcdef")   # secreto del servidor para hashes y cifrado de MFA
     auth_session_hours: int = 12                         # caducidad absoluta de la sesión
     auth_session_idle_minutes: int = 120                 # caducidad por inactividad
+    auth_signup_open: bool = True                        # false: solo se crean cuentas con invitación (para sumar una organización nueva hay que reabrirlo un momento)
     auth_mfa_issuer: str = "CloudCost"
     auth_hibp_enabled: bool = False                      # rechaza contraseñas filtradas (consulta k-anonimato a haveibeenpwned.com)
     auth_trust_forwarded: bool = False                   # confiar en X-Forwarded-For (solo detrás del BFF o de un proxy propio)

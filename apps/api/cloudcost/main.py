@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
+from starlette.routing import Match
 
-from . import db
+from . import db, metrics
 from .config import get_settings
 from .logging_config import configure_logging
 from .routers import admin, audit, dashboard, dev, expenses, imports, recommendations, scans, webhooks
@@ -25,6 +27,18 @@ async def lifespan(_: FastAPI):
     db.init_pool()
     yield
     db.close_pool()
+
+
+def _route_template(request: Request) -> str:
+    """Plantilla de la ruta atendida (p. ej. /recommendations/{rec_id}, sin el prefijo /api/v1): cardinalidad acotada para las métricas."""
+    route = request.scope.get("route")
+    if route is None:                                   # según la versión, el enrutador no deja la ruta en el scope
+        for candidate in request.app.router.routes:
+            match, _ = candidate.matches(request.scope)
+            if match == Match.FULL:
+                route = candidate
+                break
+    return getattr(route, "path", None) or "unmatched"
 
 
 def create_app() -> FastAPI:
@@ -44,12 +58,26 @@ def create_app() -> FastAPI:
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
 
+    @app.middleware("http")
+    async def http_metrics(request: Request, call_next):
+        start, status = time.perf_counter(), 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            route = _route_template(request)
+            if not route.startswith("/metrics"):
+                metrics.HTTP_REQUESTS.labels(request.method, route, str(status)).inc()
+                metrics.HTTP_LATENCY.labels(request.method, route).observe(time.perf_counter() - start)
+
     @app.exception_handler(WorkflowError)
     async def workflow_error(_: Request, exc: WorkflowError):
         return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
 
     @app.exception_handler(AuthError)
     async def auth_error(_: Request, exc: AuthError):
+        metrics.AUTH_FAILURES.labels(exc.code).inc()
         body: dict = {"detail": exc.message, "code": exc.code}
         if exc.errors:
             body["errors"] = exc.errors

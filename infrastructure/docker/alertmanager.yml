@@ -1,0 +1,24 @@
+# EDITA ESTE ARCHIVO antes de activar el perfil "monitoring": con los valores de ejemplo las alertas se evalúan pero NO llegan a nadie.
+# Alertmanager no lee variables de entorno, por eso los datos van aquí. No subas contraseñas reales a Git: monta una copia privada
+# (ALERTMANAGER_CONFIG=/ruta/privada/alertmanager.yml) o usa un receptor por webhook.
+route:
+  receiver: equipo
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [severity="critical"]
+      receiver: equipo
+      repeat_interval: 1h
+receivers:
+  - name: equipo
+    email_configs:
+      - to: CAMBIAR-alertas@tu-dominio.cl
+        from: CAMBIAR-no-reply@tu-dominio.cl
+        smarthost: CAMBIAR-smtp.tu-proveedor.com:587
+        auth_username: CAMBIAR
+        auth_password: CAMBIAR
+        send_resolved: true
+    # Alternativa por webhook (Slack, Teams, PagerDuty...):
+    # webhook_configs: [{ url: "https://hooks.slack.com/services/XXX", send_resolved: true }]

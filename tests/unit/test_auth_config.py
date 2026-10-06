@@ -28,3 +28,8 @@ def test_production_rejects_insecure_settings(override, fragment):
 def test_development_defaults_still_work():
     s = Settings(env="development")
     assert s.auth_mode == "dev" and s.auth_local_enabled
+
+
+def test_signup_is_open_by_default_and_can_be_closed():
+    assert Settings(env="development").auth_signup_open is True
+    assert Settings(env="development", auth_signup_open=False).auth_signup_open is False
