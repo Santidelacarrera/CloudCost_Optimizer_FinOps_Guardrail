@@ -127,7 +127,7 @@ jobs:
     env:
       DATABASE_ADMIN_URL: postgresql://postgres:admin@localhost:5432/cloudcost
       APP_DB_PASSWORD: ci-app-pw
-      BACKUP_DIR: ${{ runner.temp }}/backups
+      BACKUP_DIR: /tmp/cloudcost-backups
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
