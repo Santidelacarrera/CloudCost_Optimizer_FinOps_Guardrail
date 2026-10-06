@@ -36,6 +36,23 @@ docker compose up --build       # postgres, redis, migraciones+seed, api, worker
 
 En modo demo el "PR" se escribe en disco (proveedor local) y el merge se simula desde la UI.
 
+### Capturas para el README
+Con la demo en marcha (`docker compose up --build`, `AUTH_MODE=dev` en `.env`), genera las imágenes de `docs/images/` automáticamente:
+
+```bash
+cd apps/web
+npm install
+npx playwright install chromium
+npm run screenshots          # entra como demostración, ejecuta un escaneo y guarda 10 PNG
+```
+Si cambias el puerto, usa `E2E_BASE_URL=http://localhost:<WEB_PORT>`. Luego referencia las imágenes así:
+
+```markdown
+![Panel](docs/images/03-panel.png)
+![Recomendaciones](docs/images/04-recomendaciones.png)
+![Detalle de una recomendación](docs/images/05-detalle-recomendacion.png)
+```
+
 ## Desarrollo
 
 ```bash
