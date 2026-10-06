@@ -7,8 +7,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.routing import Match
 from prometheus_client import make_asgi_app
+from starlette.routing import Match
 
 from . import db, metrics
 from .config import get_settings
