@@ -5,6 +5,7 @@ import ipaddress
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 
+from .. import metrics
 from ..auth import mailer
 from ..config import Settings, get_settings
 from ..schemas import (
@@ -53,7 +54,7 @@ def _flush(settings: Settings, outbox: list[mailer.Mail], bg: BackgroundTasks) -
 
 @router.get("/config")
 def config(settings: Settings = Depends(get_settings)):
-    return {"local_enabled": settings.auth_local_enabled, "dev_login_enabled": settings.auth_mode == "dev" and settings.env != "production",
+    return {"local_enabled": settings.auth_local_enabled, "signup_open": settings.auth_signup_open, "dev_login_enabled": settings.auth_mode == "dev" and settings.env != "production",
             "password_min_length": 12, "mfa_issuer": settings.auth_mfa_issuer}
 
 
@@ -84,7 +85,9 @@ def resend_verification(body: EmailIn, request: Request, bg: BackgroundTasks, se
 @router.post("/login")
 def login(body: LoginIn, request: Request, settings: Settings = Depends(_enabled)):
     ip, ua = _client(request, settings)
-    return accounts.login(settings, email=body.email, password=body.password, ip=ip, ua=ua)
+    out = accounts.login(settings, email=body.email, password=body.password, ip=ip, ua=ua)
+    metrics.AUTH_LOGINS.labels(out.get("status", "unknown")).inc()
+    return out
 
 
 @router.post("/mfa/verify")

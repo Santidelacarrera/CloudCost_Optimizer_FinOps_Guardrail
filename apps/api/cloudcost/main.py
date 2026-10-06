@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -8,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import make_asgi_app
 
-from . import db
+from . import db, metrics
 from .config import get_settings
 from .logging_config import configure_logging
 from .routers import admin, audit, dashboard, dev, expenses, imports, recommendations, scans, webhooks
@@ -44,12 +45,26 @@ def create_app() -> FastAPI:
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         return response
 
+    @app.middleware("http")
+    async def http_metrics(request: Request, call_next):
+        start, status = time.perf_counter(), 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            route = getattr(request.scope.get("route"), "path", None) or "unmatched"   # plantilla de la ruta: cardinalidad acotada
+            if not route.startswith("/metrics"):
+                metrics.HTTP_REQUESTS.labels(request.method, route, str(status)).inc()
+                metrics.HTTP_LATENCY.labels(request.method, route).observe(time.perf_counter() - start)
+
     @app.exception_handler(WorkflowError)
     async def workflow_error(_: Request, exc: WorkflowError):
         return JSONResponse(status_code=exc.status, content={"detail": exc.message, "code": exc.code})
 
     @app.exception_handler(AuthError)
     async def auth_error(_: Request, exc: AuthError):
+        metrics.AUTH_FAILURES.labels(exc.code).inc()
         body: dict = {"detail": exc.message, "code": exc.code}
         if exc.errors:
             body["errors"] = exc.errors

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 // Rutas públicas. Todo lo demás exige cookie de sesión; la validez real la decide la API en cada llamada (aquí solo se evita pintar la
 // interfaz a quien no tiene sesión). Se aceptan ambos nombres de cookie: con HTTPS lleva el prefijo __Host-.
-const PUBLIC = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/api/auth", "/api/session"];
+const PUBLIC = ["/login", "/signup", "/forgot-password", "/reset-password", "/verify-email", "/terms", "/privacy", "/api/auth", "/api/session"];
 const has = (req: NextRequest, name: string) => Boolean(req.cookies.get(`__Host-${name}`)?.value || req.cookies.get(name)?.value);
 
 export function middleware(req: NextRequest) {

@@ -335,3 +335,42 @@ def test_audit_chain_stays_valid_and_has_no_secrets(env):
     assert chain["ok"] is True
     blob = json.dumps(events, default=str)
     assert PASSWORD not in blob and NEW_PASSWORD not in blob and "scrypt$" not in blob
+
+
+def test_closed_signup_only_accepts_invitations(env):
+    from cloudcost.services import accounts
+    closed = env.model_copy(update={"auth_signup_open": False})
+    with pytest.raises(accounts.AuthError) as e:
+        accounts.signup(closed, email=_email(), password=PASSWORD, full_name="Ana Pérez", organization_name="Acme Ltda",
+                        invite_token=None, ip=_ip(), outbox=[])
+    assert e.value.status == 403 and e.value.code == "signup_closed"
+    # una invitación inexistente no abre la puerta: falla por invitación inválida, no por registro cerrado
+    with pytest.raises(accounts.AuthError) as e:
+        accounts.signup(closed, email=_email(), password=PASSWORD, full_name="Ana Pérez", organization_name=None,
+                        invite_token="inventado", ip=_ip(), outbox=[])
+    assert e.value.code == "invalid_invite"
+
+
+def test_operator_reset_mfa_clears_second_factor_closes_sessions_and_audits(env):
+    from cloudcost.auth import totp
+    from cloudcost.services import accounts
+
+    email = _verified(env)
+    session = _login(env, email)["token"]
+    p = _principal(env, session)
+    setup = accounts.mfa_setup(env, p, PASSWORD)
+    accounts.mfa_enable(env, p, totp.code_at(setup["secret"], totp.current_step()), [])
+    assert _login(env, email)["status"] == "mfa_required"
+
+    outbox: list = []
+    assert accounts.operator_reset_mfa(env, email.upper(), "Identidad verificada por videollamada", outbox) is True
+
+    row = _admin("select mfa_enabled_at, mfa_secret_enc, mfa_last_step from accounts where email = %s", (email,))[0]
+    assert row["mfa_enabled_at"] is None and row["mfa_secret_enc"] is None and row["mfa_last_step"] is None
+    assert _admin("select count(*) n from auth_recovery_codes where account_id = %s", (p.account_id,))[0]["n"] == 0
+    assert _admin("select count(*) n from auth_sessions where account_id = %s and revoked_at is null", (p.account_id,))[0]["n"] == 0
+    ev = _admin("select payload from audit_events where entity_id = %s and event_type = 'MFA_DISABLED' order by seq desc limit 1", (str(p.account_id),))[0]["payload"]
+    assert ev["via"] == "operator" and "videollamada" in ev["reason"] and ev["had_mfa"] is True
+    assert len(outbox) == 1 and "administrador" in outbox[0].text
+    assert _login(env, email)["status"] == "ok"                      # ya no pide el segundo factor
+    assert accounts.operator_reset_mfa(env, "nadie@example.com", "x", []) is False

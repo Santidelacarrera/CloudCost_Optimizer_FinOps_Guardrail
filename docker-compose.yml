@@ -10,6 +10,7 @@ x-api-env: &api-env
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${WEB_PORT:-5985}}
   PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:-http://localhost:${WEB_PORT:-5985}}
   AUTH_LOCAL_ENABLED: ${AUTH_LOCAL_ENABLED:-true}
+  AUTH_SIGNUP_OPEN: ${AUTH_SIGNUP_OPEN:-true}
   AUTH_PEPPER: ${AUTH_PEPPER:-dev-only-pepper-change-me-0123456789abcdef}
   AUTH_TRUST_FORWARDED: ${AUTH_TRUST_FORWARDED:-true}      # la API solo la alcanza el BFF; ver docs/security.md
   AUTH_HIBP_ENABLED: ${AUTH_HIBP_ENABLED:-false}

@@ -6,7 +6,7 @@ import { ApiError, authApi } from "@/lib/api";
 import { safeNext } from "@/lib/nav";
 import { ROLES, ROLE_LABEL } from "@/lib/roles";
 
-type Cfg = { local_enabled: boolean; dev_login_enabled: boolean };
+type Cfg = { local_enabled: boolean; signup_open: boolean; dev_login_enabled: boolean };
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -17,7 +17,7 @@ export default function Login() {
   const [unverified, setUnverified] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "info" | "warn"; text: string } | null>(null);
   const [devLink, setDevLink] = useState<string | null>(null);
-  const [cfg, setCfg] = useState<Cfg>({ local_enabled: true, dev_login_enabled: false });
+  const [cfg, setCfg] = useState<Cfg>({ local_enabled: true, signup_open: true, dev_login_enabled: false });
   const [devEmail, setDevEmail] = useState("demo@example.com");
   const [devRole, setDevRole] = useState("FINOPS");
 
@@ -86,7 +86,9 @@ export default function Login() {
           <button type="submit" className="block" disabled={busy || locked || !email || !password}>{busy ? "Entrando…" : "Entrar"}</button>
           <div className="auth-links">
             <Link href="/forgot-password">Olvidé mi contraseña</Link>
-            <span>¿Primera vez? <Link href="/signup">Crear cuenta</Link></span>
+            {cfg.signup_open
+              ? <span>¿Primera vez? <Link href="/signup">Crear cuenta</Link></span>
+              : <span>¿Te invitaron? Usa el enlace del correo de invitación.</span>}
           </div>
         </form>
       )}

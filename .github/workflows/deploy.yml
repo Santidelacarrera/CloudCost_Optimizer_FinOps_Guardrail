@@ -1,0 +1,59 @@
+name: deploy
+# Despliegue manual por SSH a tu servidor con Docker. No hace nada hasta que configures los secretos de abajo.
+# Para volver atrás, ejecútalo de nuevo con la versión anterior. Las migraciones corren solas (servicio "migrate") antes de la API.
+#
+# Settings → Environments → production:
+#   · Required reviewers: tú u otra persona (el despliegue espera su aprobación)
+#   · Secrets:  DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY (clave privada solo para esto), DEPLOY_KNOWN_HOSTS (salida de `ssh-keyscan -t ed25519 host`)
+#   · Variables: DEPLOY_PATH (p. ej. /opt/cloudcost), DEPLOY_URL (https://app.tu-dominio.cl)
+# En el servidor deben existir <DEPLOY_PATH>/.env.production (a partir de .env.production.example) y `docker login ghcr.io` hecho.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Versión a desplegar, sin la v (p. ej. 1.0.0)"
+        required: true
+permissions: { contents: read }
+concurrency: { group: deploy-production, cancel-in-progress: false }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      VERSION: ${{ inputs.version }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      DEPLOY_URL: ${{ vars.DEPLOY_URL }}
+    steps:
+      - name: Validar la versión
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$' || { echo "Versión inválida: $VERSION"; exit 1; }
+          for v in DEPLOY_HOST DEPLOY_USER DEPLOY_PATH DEPLOY_URL; do
+            [ -n "$(printenv $v)" ] || { echo "Falta configurar $v en el entorno production"; exit 1; }
+          done
+      - uses: actions/checkout@v4
+      - name: Preparar SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts          # la huella del servidor va fijada: sin StrictHostKeyChecking=no
+      - name: Copiar archivos de despliegue
+        run: |
+          tar czf - docker-compose.prod.yml infrastructure/caddy infrastructure/docker/prometheus.yml infrastructure/docker/alerts.yml infrastructure/docker/alertmanager.yml \
+            | ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH' && tar xzf - -C '$DEPLOY_PATH'"
+      - name: Desplegar
+        run: |
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" "set -eu; cd '$DEPLOY_PATH'
+            test -f .env.production || { echo 'Falta .env.production en el servidor'; exit 1; }
+            sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=$VERSION/' .env.production
+            C='docker compose --env-file .env.production -f docker-compose.prod.yml'
+            \$C pull
+            \$C up -d --remove-orphans
+            \$C ps"
+      - name: Comprobar que responde
+        run: curl -fsS --retry 12 --retry-delay 10 --retry-all-errors -o /dev/null "$DEPLOY_URL/login"

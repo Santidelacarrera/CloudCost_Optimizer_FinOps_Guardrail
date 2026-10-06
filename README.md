@@ -64,6 +64,7 @@ Ver [docs/runbook.md](docs/runbook.md) (rol IAM de solo lectura con Terraform en
 
 ## Documentación
 - [Arquitectura](docs/architecture.md) · [Seguridad](docs/security.md) · [Runbook](docs/runbook.md) · [ADRs](docs/adr/)
+- Producción: [Despliegue](docs/deployment.md) · [Correo (SPF/DKIM/DMARC)](docs/email.md) · [Lista de lanzamiento](docs/launch-checklist.md)
 
 ## Estructura
 ```

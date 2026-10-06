@@ -1,0 +1,27 @@
+# Caddy obtiene y renueva solos los certificados TLS (Let's Encrypt) y redirige HTTP a HTTPS.
+# Requisitos: el DNS de SITE_DOMAIN apunta a este servidor y los puertos 80 y 443 están abiertos.
+{
+	email {$ACME_EMAIL}
+}
+
+{$SITE_DOMAIN} {
+	encode zstd gzip
+	header -Server
+
+	# Importaciones de CSV grandes; el límite real de filas lo aplica la API.
+	request_body {
+		max_size 50MB
+	}
+
+	# Solo la web es pública. Caddy fija X-Forwarded-For con la IP real del cliente (descarta lo que el cliente haya enviado),
+	# y la web la reenvía a la API para los límites por IP.
+	reverse_proxy web:3000 {
+		health_uri /login
+		health_interval 15s
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

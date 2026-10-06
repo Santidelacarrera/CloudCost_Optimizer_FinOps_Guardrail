@@ -218,6 +218,8 @@ def _create_account(conn: Connection, org_id: Any, email: str, name: str, role: 
 def signup(settings: Settings, *, email: str, password: str, full_name: str, organization_name: str | None, invite_token: str | None,
            ip: str | None, outbox: Outbox) -> dict:
     email = _norm_email(email)
+    if not invite_token and not settings.auth_signup_open:
+        raise AuthError(403, "El registro está cerrado. Pide una invitación a tu administrador.", "signup_closed")
     errors = _password_errors(settings, password, email, full_name)
     if errors:
         raise AuthError(422, errors[0], "weak_password", errors=errors)
@@ -625,6 +627,25 @@ def mfa_disable(settings: Settings, p, password: str, code: str, outbox: Outbox)
             outbox.append(mailer.security_notice_mail(acc["email"], "Desactivaste la verificación en dos pasos."))
     if err:
         raise err
+
+
+def operator_reset_mfa(settings: Settings, email: str, reason: str, outbox: Outbox) -> bool:
+    """Quita el 2FA de una cuenta cuando su dueño perdió el teléfono y los códigos de recuperación. Lo ejecuta quien opera el servidor
+    (`python -m cloudcost.cli reset-mfa`) DESPUÉS de verificar la identidad de la persona por otro canal. Cierra todas sus sesiones,
+    deja constancia en la auditoría (con el motivo) y avisa a la persona por correo. Devuelve False si no existe la cuenta."""
+    email = _norm_email(email)
+    with auth_tx() as conn:
+        acc = conn.execute("select id, organization_id, email, mfa_enabled_at from accounts where email = %s for update", (email,)).fetchone()
+        if not acc:
+            return False
+        conn.execute("select set_config('app.current_org', %s, true)", (str(acc["organization_id"]),))
+        conn.execute("update accounts set mfa_secret_enc = null, mfa_enabled_at = null, mfa_last_step = null where id = %s", (str(acc["id"]),))
+        conn.execute("delete from auth_recovery_codes where account_id = %s", (str(acc["id"]),))
+        closed = _revoke_sessions(conn, acc["id"], "mfa_reset_by_operator")
+        audit.record(conn, acc["organization_id"], audit.MFA_DISABLED, actor=audit.Actor("system", "operator-cli"), entity_type="account",
+                     entity_id=acc["id"], payload={"via": "operator", "reason": reason[:300], "had_mfa": acc["mfa_enabled_at"] is not None, "sessions_closed": closed})
+        outbox.append(mailer.security_notice_mail(acc["email"], "Un administrador del servicio quitó la verificación en dos pasos de tu cuenta tras verificar tu identidad."))
+    return True
 
 
 def regenerate_recovery_codes(settings: Settings, p, password: str, code: str) -> dict:

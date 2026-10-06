@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 import BrandMark from "@/components/BrandMark";
 
@@ -25,6 +26,7 @@ export default function AuthFrame({ children }: { children: ReactNode }) {
         <div className="brand auth-brand-m" style={{ padding: 0 }}><BrandMark /><span>CloudCost</span></div>
         <div className="auth-card">{children}</div>
         <p className="auth-foot">Contraseñas protegidas con scrypt y verificación en dos pasos opcional. Tus archivos CSV se analizan en memoria y no se guardan.</p>
+        <p className="auth-foot">Al usar CloudCost aceptas los <Link href="/terms">Términos de uso</Link> y la <Link href="/privacy">Política de privacidad</Link>.</p>
       </section>
     </div>
   );

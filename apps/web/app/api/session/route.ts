@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { SESSION_COOKIE, callApi, clearCookie, json, sameOrigin, setCookie } from "@/lib/server/bff";
 
-const DEV_LOGIN = (process.env.DEV_LOGIN ?? "dev") === "dev";
+// Seguro por omisión: solo se habilita si DEV_LOGIN=dev está declarado de forma explícita (docker-compose lo deriva de AUTH_MODE).
+const DEV_LOGIN = process.env.DEV_LOGIN === "dev";
 
 // SOLO DESARROLLO (AUTH_MODE=dev): pide un token de demostración y lo guarda en la misma cookie httpOnly que las cuentas reales.
 // Con cuentas propias u OIDC esta ruta responde 404.

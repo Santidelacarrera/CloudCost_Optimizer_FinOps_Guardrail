@@ -1,0 +1,172 @@
+# Producción en un servidor único (una VM con Docker): Caddy (TLS automático) → web → api, con Postgres, Redis, worker y copias.
+# Para algo más grande, usa Postgres administrado (RDS, Cloud SQL...): quita "postgres" y apunta DATABASE_URL / DATABASE_ADMIN_URL ahí.
+#
+#   cp .env.production.example .env.production   # y rellena
+#   docker compose --env-file .env.production -f docker-compose.prod.yml pull
+#   docker compose --env-file .env.production -f docker-compose.prod.yml up -d
+#   docker compose --env-file .env.production -f docker-compose.prod.yml --profile monitoring up -d   # además Prometheus + alertas
+name: cloudcost-prod
+
+x-api-env: &api-env
+  ENV: production
+  DATABASE_URL: postgresql://cloudcost_app:${APP_DB_PASSWORD:?define APP_DB_PASSWORD}@postgres:5432/cloudcost
+  REDIS_URL: redis://redis:6379/0
+  AUTH_MODE: local
+  AUTH_LOCAL_ENABLED: "true"
+  AUTH_SIGNUP_OPEN: ${AUTH_SIGNUP_OPEN:-true}   # false: solo con invitación (ciérralo cuando ya existan las cuentas fundadoras)
+  DEMO_ENABLED: "false"
+  PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:?define PUBLIC_WEB_URL (https://...)}
+  CORS_ORIGINS: ${PUBLIC_WEB_URL}
+  AUTH_PEPPER: ${AUTH_PEPPER:?define AUTH_PEPPER (32+ caracteres)}
+  AUTH_TRUST_FORWARDED: "true"            # la API solo la alcanza la web, detrás de Caddy: la última entrada de X-Forwarded-For es confiable
+  AUTH_HIBP_ENABLED: ${AUTH_HIBP_ENABLED:-true}
+  SMTP_HOST: ${SMTP_HOST:?define SMTP_HOST}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:?define SMTP_FROM}
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+  LLM_ENABLED: ${LLM_ENABLED:-false}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+services:
+  caddy:
+    <<: [*restart, *logging]
+    image: caddy:2.8-alpine
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?define SITE_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?define ACME_EMAIL}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./infrastructure/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: { web: { condition: service_healthy } }
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+
+  web:
+    <<: [*restart, *logging]
+    image: ${IMAGE_PREFIX:?define IMAGE_PREFIX}-web:${IMAGE_TAG:-latest}
+    environment:
+      API_URL: http://api:8000                # sin DEV_LOGIN ni INSECURE_COOKIES: cookie __Host- solo por HTTPS y acceso de desarrollo apagado
+    depends_on: { api: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/login"]
+      interval: 15s
+      retries: 10
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  api:
+    <<: [*restart, *logging]
+    image: ${IMAGE_PREFIX}-api:${IMAGE_TAG:-latest}
+    environment: *api-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/ready')"]
+      interval: 10s
+      retries: 10
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  worker:
+    <<: [*restart, *logging]
+    image: ${IMAGE_PREFIX}-api:${IMAGE_TAG:-latest}
+    command: ["celery", "-A", "cloudcost.workers.celery_app", "worker", "-l", "INFO", "--concurrency", "2"]
+    environment: *api-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  migrate:
+    image: ${IMAGE_PREFIX}-migrate:${IMAGE_TAG:-latest}
+    environment:
+      DATABASE_ADMIN_URL: postgresql://postgres:${POSTGRES_PASSWORD:?define POSTGRES_PASSWORD}@postgres:5432/cloudcost
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      SEED_DEV: "false"                       # los datos de desarrollo nunca se cargan en producción
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+
+  postgres:
+    <<: [*restart, *logging]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: cloudcost
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cloudcost"]
+      interval: 5s
+      retries: 20
+    # Sin "ports": Postgres no es alcanzable desde fuera. Para entrar:  docker compose ... exec postgres psql -U postgres cloudcost
+
+  redis:
+    <<: [*restart, *logging]
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]     # solo cola de tareas: no hace falta persistirla
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  backup:
+    <<: [*restart, *logging]
+    image: ${IMAGE_PREFIX}-backup:${IMAGE_TAG:-latest}
+    environment:
+      DATABASE_ADMIN_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/cloudcost
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_INTERVAL_HOURS: ${BACKUP_INTERVAL_HOURS:-24}
+      BACKUP_S3_URI: ${BACKUP_S3_URI:-}
+      BACKUP_PING_URL: ${BACKUP_PING_URL:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+    volumes: [backups:/backups]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    healthcheck:                                   # "unhealthy" si la última copia correcta tiene más de 26 horas
+      test: ["CMD-SHELL", "find /backups/last_success -mmin -1560 | grep -q ."]
+      interval: 10m
+      start_period: 30m
+      retries: 1
+
+  # --- Monitoreo opcional:  --profile monitoring
+  prometheus:
+    profiles: ["monitoring"]
+    <<: [*restart, *logging]
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./infrastructure/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/docker/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]          # solo desde el propio servidor; desde tu equipo: ssh -L 9090:localhost:9090 usuario@servidor
+    depends_on: [api]
+
+  alertmanager:
+    profiles: ["monitoring"]
+    <<: [*restart, *logging]
+    image: prom/alertmanager:v0.27.0
+    volumes: ["${ALERTMANAGER_CONFIG:-./infrastructure/docker/alertmanager.yml}:/etc/alertmanager/alertmanager.yml:ro"]
+    ports: ["127.0.0.1:9093:9093"]
+
+volumes:
+  pgdata:
+  backups:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
