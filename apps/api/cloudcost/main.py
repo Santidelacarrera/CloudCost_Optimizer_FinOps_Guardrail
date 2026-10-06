@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.routing import Match
 from prometheus_client import make_asgi_app
 
 from . import db, metrics
@@ -26,6 +27,18 @@ async def lifespan(_: FastAPI):
     db.init_pool()
     yield
     db.close_pool()
+
+
+def _route_template(request: Request) -> str:
+    """Plantilla de la ruta atendida (p. ej. /api/v1/recommendations/{rec_id}): cardinalidad acotada para las métricas."""
+    route = request.scope.get("route")
+    if route is None:                                   # según la versión, el enrutador no deja la ruta en el scope
+        for candidate in request.app.router.routes:
+            match, _ = candidate.matches(request.scope)
+            if match == Match.FULL:
+                route = candidate
+                break
+    return getattr(route, "path", None) or "unmatched"
 
 
 def create_app() -> FastAPI:
@@ -53,7 +66,7 @@ def create_app() -> FastAPI:
             status = response.status_code
             return response
         finally:
-            route = getattr(request.scope.get("route"), "path", None) or "unmatched"   # plantilla de la ruta: cardinalidad acotada
+            route = _route_template(request)
             if not route.startswith("/metrics"):
                 metrics.HTTP_REQUESTS.labels(request.method, route, str(status)).inc()
                 metrics.HTTP_LATENCY.labels(request.method, route).observe(time.perf_counter() - start)

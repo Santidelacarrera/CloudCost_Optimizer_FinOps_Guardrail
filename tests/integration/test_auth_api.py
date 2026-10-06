@@ -91,7 +91,8 @@ def test_metrics_count_requests_and_auth_failures(client):
     bad = client.post("/api/v1/auth/login", json={"email": _email(), "password": "Clave-Equivocada-77!"})
     assert bad.status_code == 401
     text = client.get("/metrics/").text
+    requests = [ln for ln in text.splitlines() if ln.startswith("http_requests_total")]
     assert 'auth_failures_total{code="invalid_credentials"}' in text
-    assert 'http_requests_total{method="POST",route="/api/v1/auth/login",status="401"}' in text
+    assert any('route="/api/v1/auth/login"' in ln and 'status="401"' in ln and 'method="POST"' in ln for ln in requests), requests
     assert "http_request_duration_seconds_bucket" in text
-    assert "/metrics" not in "".join(line for line in text.splitlines() if line.startswith("http_requests_total"))
+    assert not any("/metrics" in ln for ln in requests), requests
