@@ -16,8 +16,9 @@ variable "external_id" {
   description = "ExternalId (anti confused-deputy); guárdalo en tu gestor de secretos y referénciarlo como aws-sm:..."
 }
 variable "enable_cost_explorer" {
-  type    = bool
-  default = false
+  type        = bool
+  default     = true
+  description = "Permite leer Cost Explorer (ce:GetCostAndUsage[WithResources]) para usar el costo REAL de cada recurso en lugar de la tabla de precios. Cada llamada de Cost Explorer cuesta USD 0.01 en la cuenta de pagos."
 }
 
 data "aws_iam_policy_document" "trust" {

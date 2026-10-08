@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,7 +59,10 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 30.0
 
     # --- nube
-    aws_cost_explorer_resources: bool = False
+    aws_cost_explorer_resources: bool = True          # costo real por recurso (si falla, se usa la tabla de precios)
+    aws_cost_tag_key: str | None = None               # etiqueta de asignación de costos para el historial mensual (p. ej. "Name" o "app")
+    aws_cost_history_months: int = Field(6, ge=1, le=12)
+    aws_cost_metric: Literal["UnblendedCost", "AmortizedCost", "NetUnblendedCost", "NetAmortizedCost"] = "UnblendedCost"
 
     # --- observabilidad
     otel_exporter_otlp_endpoint: str | None = None

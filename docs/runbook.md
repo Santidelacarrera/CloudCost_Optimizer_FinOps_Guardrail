@@ -5,7 +5,13 @@
 cd infrastructure/terraform/aws-readonly-role
 terraform init && terraform apply -var trusted_principal_arn=<ARN de CloudCost> -var external_id=<valor secreto>
 ```
-Guarda `external_id` en tu gestor de secretos y registra la cuenta (`POST /api/v1/cloud-accounts`) con `role_arn` y `external_id_ref` = `env:NOMBRE` o `aws-sm:id`. Opcional: `-var enable_cost_explorer=true` y `AWS_COST_EXPLORER_RESOURCES=true`.
+Guarda `external_id` en tu gestor de secretos y registra la cuenta (`POST /api/v1/cloud-accounts`) con `role_arn` y `external_id_ref` = `env:NOMBRE` o `aws-sm:id`. 
+**Costos reales (Cost Explorer).** Por defecto (`enable_cost_explorer=true`, `AWS_COST_EXPLORER_RESOURCES=true`) el ahorro se calcula con el costo REAL de cada recurso de los últimos 14 días (`GetCostAndUsageWithResources`, límite de AWS), no con la tabla de precios. Requisitos y límites:
+- Habilita *Cost Explorer* y *Resource-level data* en la cuenta de pagos (Billing → Cost Explorer → Settings). Sin eso, o sin el permiso `ce:*`, el escaneo sigue funcionando con la estimación y deja un aviso en `scans.stats.warnings`; las recomendaciones indican «Costo ESTIMADO».
+- Historial largo (hasta 12 meses): define `AWS_COST_TAG_KEY` con una etiqueta de asignación de costos activada en Billing (p. ej. `Name` o `app`). Se guarda la serie mensual y la tendencia por valor de etiqueta en `evidence.cost_basis.history`; es el costo agregado de todos los recursos con esa etiqueta, no se reparte entre recursos.
+- `AWS_COST_METRIC` (`UnblendedCost` por defecto; `AmortizedCost`/`NetAmortizedCost` si usas Reserved Instances o Savings Plans y quieres ver el costo amortizado).
+- Coste de la propia consulta: AWS cobra USD 0.01 por solicitud de Cost Explorer (≈ 2-5 por escaneo y cuenta).
+- Política estricta: la configuración `require_verified_cost: true` (tabla `policies`) impide proponer apagar/reducir/eliminar recursos cuyo costo sea solo estimado.
 Memoria: requiere CloudWatch Agent (`CWAgent`); sin ella las reglas de downsize no se activan por falta de evidencia.
 
 ## 2. Conectar GitHub
