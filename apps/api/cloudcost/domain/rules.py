@@ -15,6 +15,7 @@ from .pricing import (
     InstanceSpec,
     instance_monthly_cost,
     instance_spec,
+    rds_monthly_cost,
     smaller_types,
     snapshot_monthly_cost,
     volume_monthly_cost,
@@ -45,6 +46,12 @@ class RuleConfig:
     orphan_volume_days: int = 14
     old_snapshot_days: int = 90
     min_monthly_savings: float = 5.0
+    # bases de datos: sin conexiones de aplicación durante la ventana de observación
+    rds_idle_max_connections: float = 2.0     # tolera agentes de monitoreo/backups
+    rds_idle_cpu_threshold: float = 5.0
+    rds_min_observation_days: int = 14
+    # costos: exigir costo real (Cost Explorer/CUR/importado) antes de proponer apagar o reducir un recurso
+    require_real_cost: bool = False
 
     @classmethod
     def from_overrides(cls, overrides: dict[str, Any] | None) -> "RuleConfig":
@@ -58,7 +65,13 @@ class RuleConfig:
                 default = getattr(base, f.name)
                 value = overrides[f.name]
                 try:
-                    valid[f.name] = type(default)(value)
+                    if isinstance(default, bool):          # bool("false") es True: se interpreta el texto explícitamente
+                        text = str(value).strip().lower()
+                        if text not in ("true", "false", "1", "0"):
+                            continue
+                        valid[f.name] = text in ("true", "1")
+                    else:
+                        valid[f.name] = type(default)(value)
                 except (TypeError, ValueError):
                     continue
         return cls(**valid)
@@ -98,6 +111,8 @@ def _current_cost(res: NormalizedResource) -> float:
         return volume_monthly_cost(res.volume_type, res.size_gb)
     if res.service == "ebs_snapshot":
         return snapshot_monthly_cost(res.size_gb)
+    if res.service == "rds":
+        return rds_monthly_cost(res.instance_type, res.size_gb, bool(res.attributes.get("multi_az")))
     return 0.0
 
 
@@ -219,6 +234,19 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     )
 
 
+def _volume_origin(tags: dict[str, str]) -> dict[str, str] | None:
+    """De dónde salió un volumen huérfano, según las etiquetas que dejan CloudFormation y el driver CSI de Kubernetes."""
+    stack = tags.get("aws:cloudformation:stack-name")
+    if stack:
+        return {"kind": "cloudformation", "ref": stack,
+                "text": f"Lo creó la pila de CloudFormation '{stack}': si la pila ya no se usa, elimínala en lugar de borrar volúmenes sueltos."}
+    ns = tags.get("kubernetes.io/created-for/pvc/namespace")
+    if ns:
+        return {"kind": "kubernetes_pvc", "ref": ns,
+                "text": f"Corresponde a un PersistentVolumeClaim del namespace '{ns}' (probablemente ya eliminado): limpia el PV con kubectl."}
+    return None
+
+
 def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     if res.service != "ebs" or res.attached is not False or res.state != "available" or is_protected(res.tags):
         return None
@@ -230,16 +258,18 @@ def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     confidence = 0.80
     confidence += 0.10 if res.unattached_days >= 2 * cfg.orphan_volume_days else 0.0
     confidence += 0.03 if res.iac_address else 0.0
+    origin = _volume_origin(res.tags)
     return Finding(
         rule_id="ebs_orphan", action=ACTION_DELETE_VOLUME, resource=res, destructive=True,
         title=f"Eliminar volumen huérfano {res.name or res.resource_id}",
         summary=(f"Volumen {res.volume_type or ''} de {res.size_gb:g} GB sin attachment desde hace {res.unattached_days} días "
-                 f"(umbral {cfg.orphan_volume_days})."),
+                 f"(umbral {cfg.orphan_volume_days})." + (f" {origin['text']}" if origin else "")),
         current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
         params={"resource_type": "aws_ebs_volume", "resource_id": res.resource_id},
         evidence={"unattached_days": res.unattached_days, "size_gb": res.size_gb, "volume_type": res.volume_type,
-                  "environment": res.environment, "threshold_days": cfg.orphan_volume_days},
+                  "environment": res.environment, "threshold_days": cfg.orphan_volume_days,
+                  **({"origin": origin["kind"], "origin_ref": origin["ref"]} if origin else {})},
         alternatives=[{"action": "SNAPSHOT_THEN_DELETE",
                        "description": "Tomar un snapshot final antes de eliminar, si los datos pudieran necesitarse."}],
     )
@@ -271,8 +301,46 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
     )
 
 
+def rule_rds_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
+    """Instancia/clúster RDS sin conexiones de aplicación: típico tras una migración que dejó la base anterior encendida."""
+    if res.service != "rds" or res.state != "available" or is_protected(res.tags):
+        return None
+    conn_max = res.attributes.get("connections_max")
+    if conn_max is None or res.cpu_avg is None or res.observation_days < cfg.rds_min_observation_days:
+        return None                      # sin métrica de conexiones no se infiere abandono
+    if conn_max > cfg.rds_idle_max_connections or res.cpu_avg >= cfg.rds_idle_cpu_threshold:
+        return None
+    cost = _current_cost(res)
+    if cost < cfg.min_monthly_savings:
+        return None
+    cluster = res.attributes.get("cluster_id")
+    confidence = 0.78
+    confidence += 0.08 if res.observation_days >= 30 else 0.0
+    confidence += 0.05 if conn_max == 0 else 0.0
+    confidence += 0.03 if res.iac_address else 0.0
+    where = f" del clúster {cluster}" if cluster else ""
+    return Finding(
+        rule_id="rds_idle", action=ACTION_REMOVE, resource=res, destructive=True,
+        title=f"Eliminar base de datos abandonada {res.name or res.resource_id}",
+        summary=(f"Instancia {res.instance_type}{where} sin conexiones (máximo {conn_max:g}) y CPU media {res.cpu_avg:.1f}% "
+                 f"durante {res.observation_days} días. Cuesta USD {cost:,.2f}/mes entre cómputo y almacenamiento."),
+        current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
+        estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
+        params={"resource_type": "aws_db_instance", "resource_id": res.resource_id},
+        evidence={"connections_max": conn_max, "connections_avg": res.attributes.get("connections_avg"),
+                  "cpu_avg": res.cpu_avg, "observation_days": res.observation_days, "environment": res.environment,
+                  "instance_class": res.instance_type, "storage_gb": res.size_gb, "engine": res.attributes.get("engine"),
+                  "cluster_id": cluster},
+        alternatives=[
+            {"action": "SNAPSHOT_THEN_DELETE",
+             "description": "Conservar un snapshot final (final_snapshot_identifier) y eliminar la instancia."},
+            {"action": "STOP_TEMPORARILY",
+             "description": "Detener la instancia (RDS la reinicia sola a los 7 días): útil si dudas de que nadie la use."}],
+    )
+
+
 Rule = Callable[[NormalizedResource, RuleConfig], "Finding | None"]
-RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old]
+RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old, rule_rds_idle]
 
 
 def evaluate_resource(res: NormalizedResource, cfg: RuleConfig) -> list[Finding]:
@@ -283,8 +351,34 @@ def evaluate_resource(res: NormalizedResource, cfg: RuleConfig) -> list[Finding]
     return findings
 
 
-def evaluate_all(resources: list[NormalizedResource], cfg: RuleConfig) -> list[Finding]:
+REAL_COST_SOURCES = frozenset({"cost_explorer", "cost_explorer_tag", "cur", "import"})
+
+
+def has_real_cost(res: NormalizedResource) -> bool:
+    return res.cost_source in REAL_COST_SOURCES
+
+
+def cost_basis(res: NormalizedResource) -> dict[str, Any]:
+    """Origen del costo que sustenta el ahorro propuesto; viaja en la evidencia para que quien aprueba lo vea."""
+    basis: dict[str, Any] = {"source": res.cost_source, "verified": has_real_cost(res), "monthly_cost": round(_current_cost(res), 2)}
+    if "cost_window_days" in res.attributes:
+        basis["window_days"] = res.attributes["cost_window_days"]
+    if res.cost_source == "cost_explorer_tag":
+        basis["note"] = "Costo repartido entre recursos que comparten la etiqueta de asignación; puede incluir otros servicios"
+    return basis
+
+
+def evaluate_all(resources: list[NormalizedResource], cfg: RuleConfig,
+                 skipped: list[Finding] | None = None) -> list[Finding]:
+    """Aplica las reglas. Con ``cfg.require_real_cost`` descarta (y devuelve en ``skipped``) las propuestas cuyo costo es
+    solo una estimación: no se propone apagar ni reducir algo cuyo gasto real no se ha comprobado."""
     out: list[Finding] = []
     for res in resources:
-        out.extend(evaluate_resource(res, cfg))
+        for f in evaluate_resource(res, cfg):
+            if cfg.require_real_cost and not has_real_cost(res):
+                if skipped is not None:
+                    skipped.append(f)
+                continue
+            f.evidence["cost_basis"] = cost_basis(res)
+            out.append(f)
     return out

@@ -35,6 +35,9 @@ class CloudAccountIn(BaseModel):
     role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/[\w+=,.@/-]{1,200}$")
     external_id_ref: str | None = None
     regions: list[str] = Field(default_factory=lambda: ["us-east-1"], min_length=1, max_length=20)
+    # Etiqueta de asignación de costos activada en AWS (p. ej. "Project"): permite atribuir el costo cuando Cost Explorer
+    # no tiene datos a nivel de recurso.
+    cost_allocation_tag: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[\w:./=+@ -]+$")
 
     @field_validator("external_id_ref")
     @classmethod

@@ -33,7 +33,11 @@ export default function Dashboard() {
   return (
     <>
       <PageHead title="Panel" sub="Lo que podrías ahorrar este mes, lo que espera tu aprobación y lo que ya se verificó."
-                actions={<button onClick={scan} disabled={busy}>{busy ? "Encolando…" : "Ejecutar escaneo"}</button>} />
+                actions={<>
+                  <a className="btn secondary" href="/api/proxy/reports/waste?format=pdf" download>Reporte PDF</a>
+                  <a className="btn secondary" href="/api/proxy/reports/waste?format=xlsx" download>Reporte Excel</a>
+                  <button onClick={scan} disabled={busy}>{busy ? "Encolando…" : "Ejecutar escaneo"}</button>
+                </>} />
       {err && <p className="note bad" role="alert" style={{ marginBottom: 18 }}>{err}</p>}
       {s && (
         <>

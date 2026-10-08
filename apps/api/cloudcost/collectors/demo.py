@@ -4,7 +4,13 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from ..domain.models import NormalizedResource, environment_from_tags
-from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
+from ..domain.pricing import (
+    DAYS_PER_MONTH,
+    instance_monthly_cost,
+    rds_monthly_cost,
+    snapshot_monthly_cost,
+    volume_monthly_cost,
+)
 from .base import CollectionResult, CostRecord
 
 REGION = "us-east-1"
@@ -34,6 +40,37 @@ def _snap(rid, name, size, age, env, extra_tags=None, attributes=None):
         attributes=attributes or {})
 
 
+def _rds(rid, name, klass, storage, env, conn_max, conn_avg, cpu, cluster=None, engine="aurora-postgresql", multi_az=False):
+    tags = {"Name": name, "Environment": env, **({"aws:rds:cluster": cluster} if cluster else {})}
+    return NormalizedResource(
+        "aws", "database", "rds", rid, REGION, name=name, environment=environment_from_tags(tags), instance_type=klass,
+        state="available", monthly_cost=rds_monthly_cost(klass, storage, multi_az), cost_source="demo", cpu_avg=cpu,
+        cpu_max=cpu * 3, size_gb=storage, age_days=520, observation_days=45, tags=tags,
+        attributes={"engine": engine, "connections_max": conn_max, "connections_avg": conn_avg, "cluster_id": cluster,
+                    "multi_az": multi_az})
+
+
+def _failed_deploy_volumes():
+    """Despliegue blue/green que falló a medias: cada intento dejó su volumen de datos sin adjuntar."""
+    stack = {"aws:cloudformation:stack-name": "checkout-v2-rollout"}
+    out = []
+    for n, (size, days) in enumerate([(500, 62), (500, 48), (500, 33), (1000, 21)], start=1):
+        v = _vol(f"vol-0demo0failed0{n}", f"checkout-v2-rollout-data-{n}", "gp3", size, "staging", False, days)
+        v.tags.update(stack)
+        out.append(v)
+    return out
+
+
+def _orphan_pvc_volumes():
+    """Volúmenes de PersistentVolumeClaims cuyo namespace se borró (el CSI no los elimina si la política es Retain)."""
+    out = []
+    for n, (ns, size, days) in enumerate([("feature-checkout-ab", 200, 40), ("load-test-q3", 400, 77)], start=1):
+        v = _vol(f"vol-0demo0pvc00000{n}", f"pvc-{ns}-data", "gp2", size, "development", False, days)
+        v.tags.update({"kubernetes.io/created-for/pvc/namespace": ns, "kubernetes.io/created-for/pvc/name": "data"})
+        out.append(v)
+    return out
+
+
 class DemoCollector:
     def collect(self) -> CollectionResult:
         resources = [
@@ -47,6 +84,13 @@ class DemoCollector:
             _snap("snap-0demo0oldbackup", "old-backup-dev", 300, 210, "development"),
             _snap("snap-0demo00legalhold", "audit-2021-snapshot", 120, 900, "production", {"retain": "true"}),
             _snap("snap-0demo00amibacked", None, 80, 400, "production", attributes={"ami_ids": ["ami-0demo"]}),
+            # --- Incidente de migración: el clúster Aurora anterior sigue encendido y sin tráfico desde el cambio de región
+            _rds("db-0demo0ordersw", "orders-legacy-writer", "db.r5.2xlarge", 500, "production", 0, 0.0, 0.9, "orders-legacy"),
+            _rds("db-0demo0ordersr", "orders-legacy-reader", "db.r5.xlarge", 500, "production", 0, 0.0, 0.6, "orders-legacy"),
+            _rds("db-0demo0reportsd", "reports-pg-dev", "db.m5.large", 100, "development", 1, 0.1, 1.4, None, "postgres"),
+            _rds("db-0demo0billing", "billing-prod", "db.r5.2xlarge", 800, "production", 140, 62.0, 34.0, None, "postgres", True),
+            *_failed_deploy_volumes(),
+            *_orphan_pvc_volumes(),
         ]
         today = date.today()
         costs = [
@@ -55,3 +99,8 @@ class DemoCollector:
             for r in resources for d in range(1, 15)
         ]
         return CollectionResult(resources=resources, costs=costs, warnings=["Datos sintéticos (modo demo)"])
+
+
+def expected_demo_summary(findings) -> dict:
+    """Resumen legible del escenario (usado por docs y pruebas)."""
+    return {"findings": len(findings), "monthly_savings": round(sum(f.estimated_monthly_savings for f in findings), 2)}

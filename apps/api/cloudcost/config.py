@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 30.0
 
     # --- nube
-    aws_cost_explorer_resources: bool = False
+    aws_cost_explorer_resources: bool = True     # costo facturado por recurso (ID/ARN o etiqueta); cae a estimación si no hay datos
+    require_real_cost: bool = False              # true: no proponer apagados ni reducciones sin costo real verificado
 
     # --- observabilidad
     otel_exporter_otlp_endpoint: str | None = None

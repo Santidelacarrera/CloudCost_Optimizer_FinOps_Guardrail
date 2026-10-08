@@ -69,9 +69,22 @@ def _resize(text: str, block: TfBlock, params: dict) -> tuple[str, str]:
     return text[:a] + target + text[b:], f"{block.address}: instance_type {current} → {target}"
 
 
+def _check_database_removal(block: TfBlock) -> None:
+    """Quitar un aws_db_instance hace que `terraform apply` la destruya: exige una red de seguridad explícita."""
+    top = block.top_level_text()
+    if re.search(r"^[ \t]*skip_final_snapshot[ \t]*=[ \t]*true\b", top, re.MULTILINE) or \
+            not re.search(r"^[ \t]*final_snapshot_identifier[ \t]*=", top, re.MULTILINE):
+        raise PatchError(
+            "no_final_snapshot",
+            f"{block.address} no declara final_snapshot_identifier (con skip_final_snapshot = false): eliminarla borraría los datos "
+            "sin copia final. Añádelo, aplícalo y vuelve a generar el cambio.")
+
+
 def _remove(text: str, block: TfBlock, index: IacIndex) -> tuple[str, str]:
     if block.multi_instance:
         raise PatchError("multi_instance", f"{block.address} usa count/for_each: no se elimina automáticamente.")
+    if block.type == "aws_db_instance":
+        _check_database_removal(block)
     refs = index.references_to(block)
     if refs:
         raise PatchError("referenced", f"{block.address} es referenciado desde {', '.join(sorted(refs))}; elimina primero esas referencias.")

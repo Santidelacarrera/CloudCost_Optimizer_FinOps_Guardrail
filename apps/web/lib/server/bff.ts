@@ -54,10 +54,14 @@ export async function callApi(path: string, init: { method?: string; body?: stri
 /** Reenvía la respuesta de la API conservando estado, cuerpo y Retry-After. */
 export async function relay(r: Response) {
   const retry = r.headers.get("retry-after");
-  const text = r.status === 204 || r.status === 205 ? null : await r.text();
-  return new NextResponse(text, {
+  const type = r.headers.get("content-type") ?? "application/json";
+  const disposition = r.headers.get("content-disposition");
+  // Los reportes (PDF/Excel) son binarios: leerlos como texto los corrompería.
+  const binary = !/^(application\/json|text\/)/i.test(type);
+  const body = r.status === 204 || r.status === 205 ? null : binary ? await r.arrayBuffer() : await r.text();
+  return new NextResponse(body, {
     status: r.status,
-    headers: { ...NO_STORE, "Content-Type": r.headers.get("content-type") ?? "application/json", ...(retry ? { "Retry-After": retry } : {}) },
+    headers: { ...NO_STORE, "Content-Type": type, ...(disposition ? { "Content-Disposition": disposition } : {}), ...(retry ? { "Retry-After": retry } : {}) },
   });
 }
 

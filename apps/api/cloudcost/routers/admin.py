@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import psycopg.errors
 from fastapi import APIRouter, Depends, HTTPException
+from psycopg.types.json import Jsonb
 
 from ..config import Settings, get_settings
 from ..db import tenant_tx
@@ -16,7 +17,7 @@ router = APIRouter(tags=["connections"])
 @router.get("/cloud-accounts")
 def list_accounts(p: Principal = Depends(require(*READ))):
     with tenant_tx(p.org_id) as conn:
-        return conn.execute("select id, provider, account_ref, display_name, role_arn, regions, status, created_at "
+        return conn.execute("select id, provider, account_ref, display_name, role_arn, regions, status, settings, created_at "
                             "from cloud_accounts order by created_at").fetchall()
 
 
@@ -30,9 +31,10 @@ def create_account(body: CloudAccountIn, p: Principal = Depends(require(*MANAGE_
     try:
         with tenant_tx(p.org_id) as conn:
             row = conn.execute(
-                """insert into cloud_accounts (organization_id, provider, account_ref, display_name, role_arn, external_id_ref, regions)
-                   values (%s, %s, %s, %s, %s, %s, %s) returning id, provider, account_ref, display_name, regions, status""",
-                (str(p.org_id), body.provider, body.account_ref, body.display_name, body.role_arn, body.external_id_ref, body.regions)).fetchone()
+                """insert into cloud_accounts (organization_id, provider, account_ref, display_name, role_arn, external_id_ref, regions, settings)
+                   values (%s, %s, %s, %s, %s, %s, %s, %s) returning id, provider, account_ref, display_name, regions, status, settings""",
+                (str(p.org_id), body.provider, body.account_ref, body.display_name, body.role_arn, body.external_id_ref, body.regions,
+                 Jsonb({"cost_allocation_tag": body.cost_allocation_tag} if body.cost_allocation_tag else {}))).fetchone()
             audit.record(conn, p.org_id, audit.CLOUD_ACCOUNT_CREATED, actor=audit.user_actor(p), entity_type="cloud_account",
                          entity_id=row["id"], payload={"provider": body.provider, "account_ref": body.account_ref})
         return row

@@ -1,8 +1,9 @@
 """Conector AWS de SOLO LECTURA: inventario EC2/EBS/snapshots + métricas de CloudWatch.
 
 Permisos necesarios: ver infrastructure/terraform/aws-readonly-role. El conector nunca llama a APIs de escritura.
-Los costos son una estimación por tabla de precios salvo que se active AWS_COST_EXPLORER_RESOURCES=true
-(Cost Explorer a nivel de recurso, ventana máxima de 14 días, requiere habilitarlo en la cuenta de pagos).
+El costo de cada recurso viene de Cost Explorer (por ID/ARN y, si no hay datos a nivel de recurso, por la etiqueta de
+asignación de costos de la cuenta: ``settings.cost_allocation_tag``). Solo cae a una estimación por tabla de precios si Cost Explorer
+no devuelve nada; el campo ``cost_source`` lo deja explícito y las reglas pueden exigir costo real antes de proponer cambios.
 """
 from __future__ import annotations
 
@@ -13,8 +14,15 @@ from statistics import fmean
 from typing import Any
 
 from ..domain.models import NormalizedResource, environment_from_tags
-from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
+from ..domain.pricing import (
+    DAYS_PER_MONTH,
+    instance_monthly_cost,
+    rds_monthly_cost,
+    snapshot_monthly_cost,
+    volume_monthly_cost,
+)
 from ..secrets import SecretResolver
+from .aws_cost import REAL_COST_SOURCES, CostExplorerSource, attribute_costs, monthly_from_series
 from .base import CollectionResult, CostRecord
 
 log = logging.getLogger(__name__)
@@ -31,7 +39,7 @@ def _age_days(ts: datetime | None) -> int | None:
 
 
 class AwsCollector:
-    def __init__(self, account: dict[str, Any], secrets: SecretResolver, *, use_cost_explorer: bool = False,
+    def __init__(self, account: dict[str, Any], secrets: SecretResolver, *, use_cost_explorer: bool = True,
                  on_api_error=None, session=None):
         self.account = account
         self.secrets = secrets
@@ -77,16 +85,10 @@ class AwsCollector:
         for region in self.account.get("regions") or ["us-east-1"]:
             result.resources += self._collect_region(region)
         now_day = date.today()
-        by_id = {r.resource_id: r for r in result.resources}
-        real = self._resource_costs() if self.use_cost_explorer else {}
-        for rid, daily in real.items():
-            res = by_id.get(rid)
-            if res and daily:
-                res.monthly_cost = round(fmean(a for _, a in daily) * DAYS_PER_MONTH, 2)
-                res.cost_source = "cost_explorer"
-                result.costs += [CostRecord(rid, d, a, res.service, res.region, "cost_explorer") for d, a in daily]
+        if self.use_cost_explorer and result.resources:
+            self._apply_real_costs(result)
         for res in result.resources:
-            if res.cost_source != "cost_explorer":
+            if res.cost_source not in REAL_COST_SOURCES:
                 result.costs += [CostRecord(res.resource_id, now_day - timedelta(days=d),
                                             round(res.monthly_cost / DAYS_PER_MONTH, 4), res.service, res.region, "estimate")
                                  for d in range(1, WINDOW_DAYS + 1)]
@@ -103,7 +105,79 @@ class AwsCollector:
         out += self._instances(ec2, cw, region)
         out += self._volumes(ec2, ct, region)
         out += self._snapshots(ec2, region)
+        out += self._databases(s.client("rds", region_name=region), cw, region)
         return out
+
+    # ------------------------------------------------------------------ RDS
+    def _databases(self, rds, cw, region) -> list[NormalizedResource]:
+        def fetch():
+            rows = []
+            for page in rds.get_paginator("describe_db_instances").paginate():
+                rows += page["DBInstances"]
+            return rows
+
+        dbs = self._safe("rds:DescribeDBInstances", fetch, [])
+        available = [d["DBInstanceIdentifier"] for d in dbs if d.get("DBInstanceStatus") == "available"]
+        metrics = self._db_metrics(cw, available) if available else {}
+        out = []
+        for d in dbs:
+            ident, tags = d["DBInstanceIdentifier"], _tags(d.get("TagList"))
+            m = metrics.get(ident, {})
+            multi_az = bool(d.get("MultiAZ"))
+            age = _age_days(d.get("InstanceCreateTime"))
+            observed = min(WINDOW_DAYS, m.get("hours_with_data", 0) // 24, age if age is not None else WINDOW_DAYS)
+            out.append(NormalizedResource(
+                "aws", "database", "rds", ident, region, name=tags.get("Name") or ident,
+                environment=environment_from_tags(tags), instance_type=d.get("DBInstanceClass"),
+                state=d.get("DBInstanceStatus"), size_gb=float(d.get("AllocatedStorage") or 0),
+                monthly_cost=rds_monthly_cost(d.get("DBInstanceClass"), d.get("AllocatedStorage"), multi_az),
+                cost_source="estimate", cpu_avg=m.get("cpu_avg"), cpu_max=m.get("cpu_max"), age_days=age,
+                observation_days=int(observed), tags=tags,
+                attributes={"engine": d.get("Engine"), "multi_az": multi_az, "arn": d.get("DBInstanceArn"),
+                            "cluster_id": d.get("DBClusterIdentifier"),
+                            **{k: m[k] for k in ("connections_max", "connections_avg") if k in m}}))
+        return out
+
+    def _db_metrics(self, cw, identifiers: list[str]) -> dict[str, dict[str, Any]]:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=WINDOW_DAYS)
+        result: dict[str, dict[str, Any]] = {i: {} for i in identifiers}
+        for chunk_start in range(0, len(identifiers), 60):                 # 3 consultas por base, máx. 500 por llamada
+            chunk = identifiers[chunk_start: chunk_start + 60]
+            queries, index = [], {}
+            for n, ident in enumerate(chunk):
+                dims = [{"Name": "DBInstanceIdentifier", "Value": ident}]
+                for qid, metric, stat, key in ((f"c{n}", "CPUUtilization", "Average", "cpu_avg"),
+                                               (f"x{n}", "DatabaseConnections", "Maximum", "connections_max"),
+                                               (f"a{n}", "DatabaseConnections", "Average", "connections_avg")):
+                    index[qid] = (ident, key)
+                    queries.append({"Id": qid, "ReturnData": True, "MetricStat": {
+                        "Metric": {"Namespace": "AWS/RDS", "MetricName": metric, "Dimensions": dims},
+                        "Period": 3600, "Stat": stat}})
+
+            def fetch(queries=queries):
+                values: dict[str, list[float]] = {}
+                token = None
+                while True:
+                    kw = {"MetricDataQueries": queries, "StartTime": start, "EndTime": end}
+                    if token:
+                        kw["NextToken"] = token
+                    resp = cw.get_metric_data(**kw)
+                    for r in resp["MetricDataResults"]:
+                        values.setdefault(r["Id"], []).extend(r["Values"])
+                    token = resp.get("NextToken")
+                    if not token:
+                        return values
+
+            for qid, vals in self._safe("cloudwatch:GetMetricData", fetch, {}).items():
+                ident, key = index[qid]
+                if not vals:
+                    continue
+                result[ident][key] = round(max(vals) if key == "connections_max" else fmean(vals), 2)
+                if key == "cpu_avg":
+                    result[ident]["hours_with_data"] = len(vals)
+                    result[ident]["cpu_max"] = round(max(vals), 2)         # aproximación: máximo de promedios horarios
+        return result
 
     # ------------------------------------------------------------------ EC2
     def _instances(self, ec2, cw, region) -> list[NormalizedResource]:
@@ -261,28 +335,23 @@ class AwsCollector:
                 age_days=_age_days(sn.get("StartTime")), tags=tags, attributes=attrs))
         return out
 
-    # ------------------------------------------------------------------ Costos reales (opcional)
-    def _resource_costs(self) -> dict[str, list[tuple[date, float]]]:
-        def fetch():
-            ce = self._boto_session().client("ce", region_name="us-east-1")
-            end, start = date.today(), date.today() - timedelta(days=WINDOW_DAYS)
-            out: dict[str, list[tuple[date, float]]] = {}
-            token = None
-            while True:
-                kw: dict[str, Any] = dict(
-                    TimePeriod={"Start": start.isoformat(), "End": end.isoformat()}, Granularity="DAILY",
-                    Metrics=["UnblendedCost"],
-                    Filter={"Dimensions": {"Key": "SERVICE", "Values": [
-                        "Amazon Elastic Compute Cloud - Compute", "EC2 - Other"]}},
-                    GroupBy=[{"Type": "DIMENSION", "Key": "RESOURCE_ID"}])
-                if token:
-                    kw["NextPageToken"] = token
-                resp = ce.get_cost_and_usage_with_resources(**kw)
-                for bucket in resp["ResultsByTime"]:
-                    day = date.fromisoformat(bucket["TimePeriod"]["Start"])
-                    for g in bucket["Groups"]:
-                        out.setdefault(g["Keys"][0], []).append((day, float(g["Metrics"]["UnblendedCost"]["Amount"])))
-                token = resp.get("NextPageToken")
-                if not token:
-                    return out
-        return self._safe("ce:GetCostAndUsageWithResources", fetch, {})
+    # ------------------------------------------------------------------ Costos reales (Cost Explorer)
+    def _apply_real_costs(self, result: CollectionResult) -> None:
+        """Sustituye la estimación por el costo facturado. Un fallo de Cost Explorer NO marca el inventario como parcial."""
+        def on_error(api: str, exc: Exception) -> None:
+            self.on_api_error(api)
+            log.warning("aws api error api=%s err=%s", api, type(exc).__name__)
+
+        source = CostExplorerSource(self._boto_session(), on_error=on_error)
+        attr = attribute_costs(result.resources, source, tag_key=(self.account.get("settings") or {}).get("cost_allocation_tag"))
+        self.warnings += attr.warnings
+        by_id = {r.resource_id: r for r in result.resources}
+        for rid, series in attr.by_resource.items():
+            res = by_id[rid]
+            res.monthly_cost = monthly_from_series(series)
+            res.cost_source = attr.source[rid]
+            res.attributes["cost_window_days"] = len(series)
+            result.costs += [CostRecord(rid, d, a, res.service, res.region, attr.source[rid]) for d, a in series]
+        estimated = sum(1 for r in result.resources if r.cost_source not in REAL_COST_SOURCES)
+        if estimated:
+            self.warnings.append(f"{estimated} recursos sin costo real en Cost Explorer: se usa estimación por tabla de precios")

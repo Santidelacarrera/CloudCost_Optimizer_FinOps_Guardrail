@@ -16,8 +16,9 @@ variable "external_id" {
   description = "ExternalId (anti confused-deputy); guárdalo en tu gestor de secretos y referénciarlo como aws-sm:..."
 }
 variable "enable_cost_explorer" {
-  type    = bool
-  default = false
+  type        = bool
+  default     = true
+  description = "Permite leer el costo facturado por recurso (ce:GetCostAndUsage*). Sin esto la plataforma solo puede estimar costos y no propone apagar nada si REQUIRE_REAL_COST=true."
 }
 
 data "aws_iam_policy_document" "trust" {
@@ -46,7 +47,7 @@ data "aws_iam_policy_document" "read" {
     sid = "ReadInventoryAndMetrics"
     actions = [
       "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:DescribeImages",
-      "ec2:DescribeInstanceTypes", "cloudwatch:GetMetricData", "cloudwatch:ListMetrics",
+      "ec2:DescribeInstanceTypes", "rds:DescribeDBInstances", "cloudwatch:GetMetricData", "cloudwatch:ListMetrics",
       "cloudtrail:LookupEvents", "backup:ListProtectedResources", "dlm:GetLifecyclePolicies", "dlm:GetLifecyclePolicy",
     ]
     resources = ["*"]

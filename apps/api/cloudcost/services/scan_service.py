@@ -4,6 +4,7 @@ Las llamadas de red (nube, Git, LLM) se hacen FUERA de las transacciones de base
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass
@@ -106,14 +107,19 @@ def _apply_unattached_tracking(resources: list[NormalizedResource], hints: dict[
 
 
 def prepare_findings(resources: list[NormalizedResource], *, rule_cfg: RuleConfig, policy_cfg: pol.PolicyConfig,
-                     index: IacIndex | None, llm_client=None) -> list[_Prepared]:
+                     index: IacIndex | None, llm_client=None, warnings: list[str] | None = None) -> list[_Prepared]:
     if index:
         for r in resources:
             block = index.match(r)
             if block:
                 r.iac_address, r.iac_file = block.address, block.path
     prepared: list[_Prepared] = []
-    for f in evaluate_all(resources, rule_cfg):
+    skipped: list[Finding] = []
+    findings = evaluate_all(resources, rule_cfg, skipped)
+    if skipped and warnings is not None:
+        warnings.append(f"{len(skipped)} propuestas omitidas: su costo es una estimación y REQUIRE_REAL_COST está activo "
+                        "(habilita Cost Explorer a nivel de recurso o una etiqueta de asignación de costos)")
+    for f in findings:
         risk = risk_mod.classify_risk(f)
         decision = pol.evaluate(action=f.action, risk=risk, environment=f.resource.environment,
                                 confidence=f.confidence, cfg=policy_cfg)
@@ -200,8 +206,9 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
 
     # ---- 2) cómputo en memoria
     _apply_unattached_tracking(result.resources, ctx["unattached_hints"])
-    prepared = prepare_findings(result.resources, rule_cfg=ctx["rule_cfg"], policy_cfg=ctx["policy_cfg"], index=index,
-                                llm_client=llm_client)
+    rule_cfg = dataclasses.replace(ctx["rule_cfg"], require_real_cost=ctx["rule_cfg"].require_real_cost or settings.require_real_cost)
+    prepared = prepare_findings(result.resources, rule_cfg=rule_cfg, policy_cfg=ctx["policy_cfg"], index=index,
+                                llm_client=llm_client, warnings=warnings)
 
     # ---- 3) persistencia
     created = updated = 0

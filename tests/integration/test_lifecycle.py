@@ -60,9 +60,9 @@ def test_full_lifecycle_and_guardrails():
     with tenant_tx(ORG) as conn:
         scan_id = _new_scan(conn)
     stats = scan_service.run_scan(ORG, scan_id, settings=settings, secrets=secrets)
-    assert stats["resources_seen"] == 10 and stats["findings"] == 6, stats
-    assert stats["recommendations_created"] >= 6 or stats["recommendations_updated"] >= 6    # idempotente entre ejecuciones
-    assert abs(stats["estimated_monthly_savings"] - 777.42) < 0.01
+    assert stats["resources_seen"] == 20 and stats["findings"] == 15, stats
+    assert stats["recommendations_created"] >= 15 or stats["recommendations_updated"] >= 15  # idempotente entre ejecuciones
+    assert abs(stats["estimated_monthly_savings"] - 2383.75) < 0.01
 
     with tenant_tx(ORG) as conn:
         scan_again = _new_scan(conn)
@@ -76,6 +76,8 @@ def test_full_lifecycle_and_guardrails():
     scratch = _by_title(items, "scratch-dev")
     assert web["action"] == "RESIZE_INSTANCE" and web["approvals_required"] == 1
     assert legacy["destructive"] and legacy["approvals_required"] == 2 and legacy["automation_blocked"]
+    orders = _by_title(items, "orders-legacy-writer")             # base Aurora abandonada: riesgo alto => aprobación reforzada
+    assert orders["risk"] == "HIGH" and orders["destructive"] and orders["approvals_required"] == 2
 
     finops, sre, admin = _principal("FINOPS", name="ana"), _principal("SRE", name="bob"), _principal("ADMIN", name="eve")
 
