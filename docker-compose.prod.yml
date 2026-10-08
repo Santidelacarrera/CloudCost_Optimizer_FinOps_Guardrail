@@ -18,6 +18,8 @@ x-api-env: &api-env
   PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:?define PUBLIC_WEB_URL (https://...)}
   CORS_ORIGINS: ${PUBLIC_WEB_URL}
   AUTH_PEPPER: ${AUTH_PEPPER:?define AUTH_PEPPER (32+ caracteres)}
+  AUTH_PEPPER_ID: ${AUTH_PEPPER_ID:-1}                   # solo cambia al rotar el pepper (docs/pepper-rotation.md)
+  AUTH_PEPPER_PREVIOUS: ${AUTH_PEPPER_PREVIOUS:-}        # peppers anteriores, "id:secreto,id:secreto", mientras queden datos que los usen
   AUTH_TRUST_FORWARDED: "true"            # la API solo la alcanza la web, detrás de Caddy: la última entrada de X-Forwarded-For es confiable
   AUTH_HIBP_ENABLED: ${AUTH_HIBP_ENABLED:-true}
   SMTP_HOST: ${SMTP_HOST:?define SMTP_HOST}

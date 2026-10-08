@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .auth import pepper
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -20,6 +22,8 @@ class Settings(BaseSettings):
     auth_mode: Literal["dev", "oidc", "local"] = "dev"   # dev: tokens de desarrollo · oidc: IdP externo · local: solo cuentas propias
     auth_local_enabled: bool = True                      # cuentas propias (registro, contraseña, MFA) además del modo anterior
     auth_pepper: SecretStr = SecretStr("dev-only-pepper-change-me-0123456789abcdef")   # secreto del servidor para hashes y cifrado de MFA
+    auth_pepper_id: str = "1"                            # id del pepper actual; al rotar, usa uno nuevo (p. ej. "2") — ver docs/pepper-rotation.md
+    auth_pepper_previous: SecretStr | None = None        # peppers anteriores solo para leer datos viejos: "id:secreto[,id:secreto]"
     auth_session_hours: int = 12                         # caducidad absoluta de la sesión
     auth_session_idle_minutes: int = 120                 # caducidad por inactividad
     auth_signup_open: bool = True                        # false: solo se crean cuentas con invitación (para sumar una organización nueva hay que reabrirlo un momento)
@@ -92,6 +96,24 @@ class Settings(BaseSettings):
         if self.auth_mode == "dev" and len(self.jwt_secret.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET debe tener al menos 32 caracteres")
         return self
+
+    @model_validator(mode="after")
+    def _pepper_ring_guard(self) -> "Settings":
+        previous = self.auth_pepper_previous.get_secret_value() if self.auth_pepper_previous else None
+        try:
+            _ = self.pepper_ring
+            if self.env == "production":
+                problems = pepper.validate_for_production(self.auth_pepper.get_secret_value(), previous)
+                if problems:
+                    raise ValueError("; ".join(problems))
+        except pepper.PepperError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+    @property
+    def pepper_ring(self) -> "pepper.PepperRing":
+        previous = self.auth_pepper_previous.get_secret_value() if self.auth_pepper_previous else None
+        return pepper.build_ring(self.auth_pepper.get_secret_value(), self.auth_pepper_id, previous)
 
 
 @lru_cache

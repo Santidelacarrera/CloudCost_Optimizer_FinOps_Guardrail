@@ -23,6 +23,7 @@ from typing import Any, Iterator
 from psycopg import Connection
 
 from ..auth import crypto, mailer, passwords, totp
+from ..auth.pepper import PepperRing
 from ..config import Settings
 from ..db import init_pool, tenant_tx
 from . import audit
@@ -65,7 +66,18 @@ def auth_tx(org_id: Any = None) -> Iterator[Connection]:
 
 
 def _pepper(settings: Settings) -> bytes:
-    return settings.auth_pepper.get_secret_value().encode()
+    """Pepper ACTUAL: para crear datos nuevos y claves de límites de intentos."""
+    return settings.pepper_ring.current
+
+
+def _ring(settings: Settings) -> PepperRing:
+    """Todos los peppers vigentes: para verificar y descifrar datos creados antes de una rotación."""
+    return settings.pepper_ring
+
+
+def _hash_pw(settings: Settings, password: str) -> str:
+    ring = _ring(settings)
+    return passwords.hash_password(password, ring.current, pepper_id=ring.current_id)
 
 
 def _norm_email(email: str) -> str:
@@ -226,7 +238,7 @@ def signup(settings: Settings, *, email: str, password: str, full_name: str, org
     if not invite_token and not (organization_name and len(organization_name) >= 2):
         raise AuthError(422, "Indica el nombre de tu organización.", "organization_required")
     pepper = _pepper(settings)
-    pw_hash = passwords.hash_password(password, pepper)          # siempre, exista o no el correo: mismo costo
+    pw_hash = _hash_pw(settings, password)                       # siempre, exista o no el correo: mismo costo
     eh = crypto.hash_email(email, pepper)
     out: dict = {"status": "check_email"}
     with auth_tx() as conn:
@@ -312,10 +324,12 @@ def login(settings: Settings, *, email: str, password: str, ip: str | None, ua: 
                            (email,)).fetchone()
     if locked or ip_blocked:
         raise _locked_error(locked or 60)
-    stored = acc["password_hash"] if acc else passwords.dummy_hash(pepper)
-    password_ok = passwords.verify_password(password, stored, pepper)
+    ring = _ring(settings)
+    stored = acc["password_hash"] if acc else passwords.dummy_hash(ring.current, ring.current_id)
+    password_ok = passwords.verify_password(password, stored, ring)
     ok = bool(acc) and password_ok and acc["disabled_at"] is None
-    new_hash = passwords.hash_password(password, pepper) if ok and passwords.needs_rehash(stored) else None
+    # Re-hash transparente: parámetros de scrypt nuevos o pepper rotado (la contraseña solo está en claro en este momento).
+    new_hash = _hash_pw(settings, password) if ok and passwords.needs_rehash(stored, ring.current_id) else None
     err: AuthError | None = None
     out: dict = {}
     with auth_tx(acc["organization_id"] if acc else None) as conn:
@@ -352,21 +366,24 @@ def _finish_login(conn: Connection, settings: Settings, acc: dict, eh: str, ip: 
 
 def _second_factor(conn: Connection, settings: Settings, acc: dict, code: str) -> str | None:
     """Verifica un código TOTP o de recuperación. Devuelve 'totp', 'recovery' o None. TOTP: cada intervalo sirve una sola vez."""
-    pepper = _pepper(settings)
+    ring = _ring(settings)
     cleaned = (code or "").strip().replace(" ", "")
     if cleaned.isdigit() and len(cleaned) == 6 and acc.get("mfa_secret_enc"):
-        secret = crypto.decrypt_secret(acc["mfa_secret_enc"], pepper, str(acc["id"]))
+        secret = crypto.decrypt_secret(acc["mfa_secret_enc"], ring, str(acc["id"]))
         step = totp.verify(secret, cleaned, last_step=acc.get("mfa_last_step"))
         if step is not None:
             claimed = conn.execute("update accounts set mfa_last_step = %s where id = %s and (mfa_last_step is null or mfa_last_step < %s) "
                                    "returning id", (step, str(acc["id"]), step)).fetchone()
+            if claimed and crypto.secret_pepper_id(acc["mfa_secret_enc"]) != ring.current_id:      # re-cifrado transparente tras una rotación
+                conn.execute("update accounts set mfa_secret_enc = %s where id = %s and mfa_secret_enc = %s",
+                             (crypto.reencrypt_secret(acc["mfa_secret_enc"], ring, str(acc["id"])), str(acc["id"]), acc["mfa_secret_enc"]))
             return "totp" if claimed else None
         return None
     if re.fullmatch(r"[a-z0-9]{5}-?[a-z0-9]{5}", crypto.normalize_recovery(cleaned)):
         norm = crypto.normalize_recovery(cleaned)
         norm = norm if "-" in norm else norm[:5] + "-" + norm[5:]
-        used = conn.execute("update auth_recovery_codes set used_at = now() where account_id = %s and code_hash = %s and used_at is null "
-                            "returning id", (str(acc["id"]), crypto.hash_recovery(norm, pepper))).fetchone()
+        used = conn.execute("update auth_recovery_codes set used_at = now() where account_id = %s and code_hash = any(%s) and used_at is null "
+                            "returning id", (str(acc["id"]), crypto.recovery_candidates(norm, ring))).fetchone()
         return "recovery" if used else None
     return None
 
@@ -480,7 +497,7 @@ def _reauth(conn: Connection, settings: Settings, acc: dict, password: str, code
     wait = _lock_remaining(conn, "login", eh)
     if wait:
         return _locked_error(wait)
-    if not passwords.verify_password(password, acc["password_hash"], pepper):
+    if not passwords.verify_password(password, acc["password_hash"], _ring(settings)):
         _record(conn, "login", eh, None, False)
         return AuthError(403, "La contraseña actual no es correcta.", "invalid_password")
     if code is not None and acc["mfa_enabled_at"] is not None and _second_factor(conn, settings, acc, code) is None:
@@ -494,11 +511,11 @@ def change_password(settings: Settings, p, current: str, new: str, outbox: Outbo
     errors = _password_errors(settings, new, p.email or "", p.name or "")
     if errors:
         raise AuthError(422, errors[0], "weak_password", errors=errors)
-    new_hash = passwords.hash_password(new, _pepper(settings))
+    new_hash = _hash_pw(settings, new)
     with auth_tx(p.org_id) as conn:
         acc = _load_account(conn, p)
         err = _reauth(conn, settings, acc, current)
-        if not err and passwords.verify_password(new, acc["password_hash"], _pepper(settings)):
+        if not err and passwords.verify_password(new, acc["password_hash"], _ring(settings)):
             err = AuthError(422, "La nueva contraseña debe ser distinta de la actual.", "same_password")
         if not err:
             conn.execute("update accounts set password_hash = %s, password_changed_at = now() where id = %s", (new_hash, str(acc["id"])))
@@ -539,7 +556,7 @@ def reset_password(settings: Settings, *, token: str, password: str, outbox: Out
     errors = _password_errors(settings, password, row["email"], row["full_name"])
     if errors:
         raise AuthError(422, errors[0], "weak_password", errors=errors)
-    new_hash = passwords.hash_password(password, pepper)
+    new_hash = _hash_pw(settings, password)
     with auth_tx() as conn:
         used = _consume_token(conn, "reset_password", token)
         if not used:
@@ -568,7 +585,7 @@ def mfa_setup(settings: Settings, p, password: str) -> dict:
         if not err:
             secret = totp.new_secret()
             conn.execute("update accounts set mfa_secret_enc = %s, mfa_last_step = null where id = %s",
-                         (crypto.encrypt_secret(secret, _pepper(settings), str(acc["id"])), str(acc["id"])))
+                         (crypto.encrypt_secret(secret, _pepper(settings), str(acc["id"]), _ring(settings).current_id), str(acc["id"])))
             out = {"secret": secret, "otpauth_uri": totp.otpauth_uri(settings.auth_mfa_issuer, acc["email"], secret)}
     if err:
         raise err
@@ -579,7 +596,7 @@ def _new_recovery_set(conn: Connection, settings: Settings, account_id: Any) -> 
     codes = crypto.new_recovery_codes()
     conn.execute("delete from auth_recovery_codes where account_id = %s", (str(account_id),))
     for c in codes:
-        conn.execute("insert into auth_recovery_codes (account_id, code_hash) values (%s, %s)", (str(account_id), crypto.hash_recovery(c, _pepper(settings))))
+        conn.execute("insert into auth_recovery_codes (account_id, code_hash) values (%s, %s)", (str(account_id), crypto.hash_recovery(c, _pepper(settings), _ring(settings).current_id)))
     return codes
 
 
@@ -596,7 +613,7 @@ def mfa_enable(settings: Settings, p, code: str, outbox: Outbox) -> dict:
         elif _recent(conn, "mfa", email_hash=key, seconds=MFA_WINDOW, only_failures=True) >= MFA_FAIL_LIMIT:
             err = _locked_error(MFA_WINDOW)
         else:
-            step = totp.verify(crypto.decrypt_secret(acc["mfa_secret_enc"], _pepper(settings), str(acc["id"])), code)
+            step = totp.verify(crypto.decrypt_secret(acc["mfa_secret_enc"], _ring(settings), str(acc["id"])), code)
             if step is None:
                 _record(conn, "mfa", key, None, False)
                 err = AuthError(422, "El código no coincide. Revisa que la hora de tu teléfono sea automática e inténtalo de nuevo.", "invalid_code")
