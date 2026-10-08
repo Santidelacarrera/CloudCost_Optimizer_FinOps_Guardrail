@@ -174,7 +174,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: aquasecurity/trivy-action@v0.36.0
-        with: { scan-type: fs, severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
+        with: { scan-type: fs, severity: "HIGH,CRITICAL", exit-code: "0", ignore-unfixed: true, format: json, output: trivy.json }
+      - name: Trivy — hallazgos HIGH/CRITICAL con corrección (falla si hay alguno)
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          rows = []
+          for r in json.load(open("trivy.json")).get("Results") or []:
+              for v in r.get("Vulnerabilities") or []:
+                  rows.append((r["Target"], v["PkgName"], v["InstalledVersion"], v["VulnerabilityID"], v["Severity"], v.get("FixedVersion", "")))
+          for t, p, i, vid, sev, fix in rows:
+              print(f"::error file={t},title=Trivy {sev}::{p} {i} -> {fix or 'sin fix'} ({vid})")
+          sys.exit(1 if rows else 0)
+          PY
       - uses: bridgecrewio/checkov-action@v12
         with: { directory: infrastructure/terraform/aws-readonly-role, soft_fail: true }
 
