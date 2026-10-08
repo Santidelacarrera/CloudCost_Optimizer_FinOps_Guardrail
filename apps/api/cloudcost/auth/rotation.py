@@ -27,7 +27,7 @@ def census(rows_pw: list[str], rows_totp: list[str], rows_codes: list[str]) -> d
 
 
 def blockers(counts: dict[str, dict[str, int]], pepper_id: str) -> dict[str, int]:
-    return {kind: per.get(pepper_id, 0) for kind, per in counts.items() if per.get(pepper_id, 0)}
+    return {kind: counts[kind].get(pepper_id, 0) for kind in ("passwords", "totp", "recovery_codes") if counts.get(kind, {}).get(pepper_id, 0)}
 
 
 def reencrypt_plan(rows: list[dict[str, Any]], ring: PepperRing) -> tuple[list[dict[str, str]], list[Any], int]:

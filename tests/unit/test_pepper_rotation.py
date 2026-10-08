@@ -159,6 +159,8 @@ def test_census_y_blockers():
     assert counts == {"passwords": {"1": 1, "2": 1, "invalid": 1}, "totp": {"1": 1, "2": 1}, "recovery_codes": {"1": 1, "2": 1}}
     assert rotation.blockers(counts, "1") == {"passwords": 1, "totp": 1, "recovery_codes": 1}
     assert rotation.blockers(counts, "9") == {}
+    status = {"current": "2", "known": ["2", "1"], "accounts": 3, **counts}          # lo que devuelve _status: incluye campos que no son contadores
+    assert rotation.blockers(status, "1") == {"passwords": 1, "totp": 1, "recovery_codes": 1}
 
 
 def test_reencrypt_plan():

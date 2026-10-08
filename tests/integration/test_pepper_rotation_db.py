@@ -121,8 +121,9 @@ def test_el_2fa_sigue_funcionando_y_se_recifra_al_usarlo(before, after, only_new
                                ip=None, ua=None, outbox=[])
     assert done["status"] == "ok"
     assert _row(acc["email"])["mfa_secret_enc"].startswith("v2.2.")           # re-cifrado con el pepper actual
+    _admin("update accounts set mfa_last_step = null where email = %s", (acc["email"],))     # el reloj real no deja un intervalo nuevo: se repite uno válido
     second = accounts.login(only_new, email=acc["email"], password=PASSWORD, ip="203.0.113.10", ua="pytest")
-    assert accounts.mfa_verify(only_new, pending_token=second["pending_token"], code=totp.code_at(acc["secret"], acc["step"] + 2),
+    assert accounts.mfa_verify(only_new, pending_token=second["pending_token"], code=totp.code_at(acc["secret"], acc["step"] + 1),
                                ip=None, ua=None, outbox=[])["status"] == "ok"
 
 
