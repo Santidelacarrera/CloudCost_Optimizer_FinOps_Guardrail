@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     github_api_url: str = "https://api.github.com"
     github_token: SecretStr | None = None
     github_webhook_secret: SecretStr | None = None
+    gitlab_api_url: str = "https://gitlab.com/api/v4"       # GitLab autoalojado: https://gitlab.miempresa.com/api/v4
+    gitlab_token: SecretStr | None = None
+    gitlab_webhook_secret: SecretStr | None = None
 
     # --- demo
     demo_enabled: bool = True
@@ -87,6 +90,8 @@ class Settings(BaseSettings):
                     problems.append("SMTP_HOST es obligatorio: sin correo no hay verificación ni recuperación de contraseña")
                 if not self.public_web_url.startswith("https://"):
                     problems.append("PUBLIC_WEB_URL debe ser https:// en producción")
+            if not self.gitlab_api_url.startswith("https://"):
+                problems.append("GITLAB_API_URL debe ser https:// en producción (el token viaja en cada llamada)")
             if problems:
                 raise ValueError("; ".join(problems))
         if self.auth_mode == "dev" and len(self.jwt_secret.get_secret_value()) < 32:

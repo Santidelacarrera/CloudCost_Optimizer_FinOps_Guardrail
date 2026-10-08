@@ -5,6 +5,7 @@ from typing import Any
 from ..config import Settings
 from ..git.base import GitProvider, GitProviderError
 from ..git.github import GitHubProvider
+from ..git.gitlab import GitLabProvider
 from ..git.local import LocalDemoProvider
 from ..secrets import SecretResolver
 
@@ -19,4 +20,8 @@ def get_git_provider(repo: dict[str, Any], settings: Settings, secrets: SecretRe
         token = secrets.resolve(repo.get("token_ref")) or (
             settings.github_token.get_secret_value() if settings.github_token else None)
         return GitHubProvider(token or "", settings.github_api_url)
-    raise GitProviderError(f"Proveedor Git '{provider}' aún no disponible (GitLab: Fase 2)")
+    if provider == "gitlab":
+        token = secrets.resolve(repo.get("token_ref")) or (
+            settings.gitlab_token.get_secret_value() if settings.gitlab_token else None)
+        return GitLabProvider(token or "", settings.gitlab_api_url)
+    raise GitProviderError(f"Proveedor Git '{provider}' no soportado")

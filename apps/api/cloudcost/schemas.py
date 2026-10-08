@@ -4,7 +4,7 @@ import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _REF = re.compile(r"^(env|aws-sm):[A-Za-z0-9_./:@+=-]{1,200}$")
 
@@ -52,8 +52,9 @@ class CloudAccountIn(BaseModel):
 
 
 class RepositoryIn(BaseModel):
-    provider: Literal["github", "local"]
-    full_name: str = Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+    provider: Literal["github", "gitlab", "local"]
+    # GitHub/local: `propietario/repo`. GitLab admite subgrupos: `grupo/subgrupo/proyecto` (hasta 20 niveles).
+    full_name: str = Field(pattern=r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+){1,19}$")
     default_branch: str = Field(default="main", pattern=r"^[A-Za-z0-9._/-]{1,100}$")
     iac_paths: list[str] = Field(default_factory=lambda: ["."], max_length=20)
     token_ref: str | None = None
@@ -64,6 +65,15 @@ class RepositoryIn(BaseModel):
         if v is not None and not _REF.match(v):
             raise ValueError("Usa una referencia de secreto (env:NOMBRE o aws-sm:id), nunca el token")
         return v
+
+    @model_validator(mode="after")
+    def _check_full_name(self) -> "RepositoryIn":
+        parts = self.full_name.split("/")
+        if any(p in (".", "..") for p in parts):
+            raise ValueError("Nombre de repositorio inválido")
+        if self.provider != "gitlab" and len(parts) != 2:
+            raise ValueError("Usa el formato propietario/repositorio (los subgrupos solo existen en GitLab)")
+        return self
 
     @field_validator("iac_paths")
     @classmethod
