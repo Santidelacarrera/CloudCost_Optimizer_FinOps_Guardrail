@@ -23,5 +23,8 @@
     "typescript": "^5.4",
     "@types/qrcode": "^1.5.5",
     "@playwright/test": "^1.48.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.18"
   }
 }

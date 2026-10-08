@@ -173,6 +173,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Resolver las dependencias web tal como las instala el Dockerfile (respeta "overrides")
+        run: cd apps/web && npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - uses: aquasecurity/trivy-action@v0.36.0
         with: { scan-type: fs, severity: "HIGH,CRITICAL", exit-code: "0", ignore-unfixed: true, format: json, output: trivy.json }
       - name: Trivy — hallazgos HIGH/CRITICAL con corrección (falla si hay alguno)
