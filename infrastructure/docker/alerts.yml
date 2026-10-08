@@ -16,6 +16,13 @@ groups:
         annotations:
           summary: "El worker de escaneos no responde"
           description: "Los escaneos quedarán en cola hasta que vuelva."
+      - alert: MotorDePoliticasConErrores
+        expr: increase(policy_evaluations_total{result="error"}[15m]) > 0
+        for: 0m
+        labels: { severity: critical }
+        annotations:
+          summary: "El motor de políticas OPA no puede evaluar"
+          description: "Con OPA_MODE=enforce la API NO crea Pull Requests mientras el motor falle (falla cerrado). Revisa que el binario `opa` exista en la imagen y que las políticas Rego sean válidas (`opa check`)."
       - alert: ErroresDelServidor
         expr: |
           sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
