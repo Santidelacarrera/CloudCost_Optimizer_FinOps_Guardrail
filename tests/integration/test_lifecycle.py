@@ -60,9 +60,9 @@ def test_full_lifecycle_and_guardrails():
     with tenant_tx(ORG) as conn:
         scan_id = _new_scan(conn)
     stats = scan_service.run_scan(ORG, scan_id, settings=settings, secrets=secrets)
-    assert stats["resources_seen"] == 10 and stats["findings"] == 6, stats
-    assert stats["recommendations_created"] >= 6 or stats["recommendations_updated"] >= 6    # idempotente entre ejecuciones
-    assert abs(stats["estimated_monthly_savings"] - 777.42) < 0.01
+    assert stats["resources_seen"] == 21 and stats["findings"] == 13, stats
+    assert stats["recommendations_created"] >= 13 or stats["recommendations_updated"] >= 13    # idempotente entre ejecuciones
+    assert abs(stats["estimated_monthly_savings"] - 1573.00) < 0.01
 
     with tenant_tx(ORG) as conn:
         scan_again = _new_scan(conn)

@@ -5,7 +5,7 @@ import difflib
 import re
 from dataclasses import dataclass, field
 
-from ..domain.rules import ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE
+from ..domain.rules import ACTION_DELETE_DB, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE
 from .terraform import HclSyntaxError, IacIndex, TfBlock, parse_resources
 
 
@@ -90,7 +90,7 @@ def build_patch(*, action: str, params: dict, block: TfBlock, index: IacIndex) -
     text = index.files[block.path]
     if action == ACTION_RESIZE:
         new_text, summary = _resize(text, block, params)
-    elif action in (ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT):
+    elif action in (ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_DB):
         new_text, summary = _remove(text, block, index)
     else:
         raise PatchError("unsupported_action", f"Acción '{action}' no soportada para generar parches.")
