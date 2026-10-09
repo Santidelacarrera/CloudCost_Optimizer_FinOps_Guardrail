@@ -33,11 +33,40 @@ def is_protected(tags: dict[str, str] | None) -> bool:
     return False
 
 
+# Vocabulario común: cada nube nombra distinto lo mismo; las reglas trabajan con estas tres familias.
+COMPUTE_SERVICES = frozenset({"ec2", "vm", "gce"})                     # AWS EC2 | Azure VM | GCP Compute Engine
+VOLUME_SERVICES = frozenset({"ebs", "disk", "pd"})                     # EBS | Azure Managed Disk | Persistent Disk
+SNAPSHOT_SERVICES = frozenset({"ebs_snapshot", "disk_snapshot", "pd_snapshot"})
+PROVIDERS = ("aws", "azure", "gcp")
+
+# (proveedor, servicio) -> tipos de recurso de Terraform que lo declaran (el primero es el que se muestra).
+TF_TYPES: dict[tuple[str, str], tuple[str, ...]] = {
+    ("aws", "ec2"): ("aws_instance",), ("aws", "ebs"): ("aws_ebs_volume",), ("aws", "ebs_snapshot"): ("aws_ebs_snapshot",),
+    ("aws", "rds"): ("aws_db_instance",),
+    ("azure", "vm"): ("azurerm_linux_virtual_machine", "azurerm_windows_virtual_machine"),
+    ("azure", "disk"): ("azurerm_managed_disk",), ("azure", "disk_snapshot"): ("azurerm_snapshot",),
+    ("gcp", "gce"): ("google_compute_instance",), ("gcp", "pd"): ("google_compute_disk", "google_compute_region_disk"),
+    ("gcp", "pd_snapshot"): ("google_compute_snapshot",),
+}
+# Atributo de Terraform que fija el tamaño de la máquina, por tipo.
+RESIZE_ATTR = {"aws_instance": "instance_type", "azurerm_linux_virtual_machine": "size",
+               "azurerm_windows_virtual_machine": "size", "google_compute_instance": "machine_type"}
+
+
+def tf_types_for(res: "NormalizedResource") -> tuple[str, ...]:
+    return TF_TYPES.get((res.provider, res.service), ())
+
+
+def tf_type_for(res: "NormalizedResource") -> str | None:
+    types = tf_types_for(res)
+    return types[0] if types else None
+
+
 @dataclass
 class NormalizedResource:
     provider: str                       # aws | azure | gcp
     resource_type: str                  # compute | storage | database | kubernetes
-    service: str                        # ec2 | ebs | ebs_snapshot | ...
+    service: str                        # ec2 | ebs | ebs_snapshot | rds | vm | disk | disk_snapshot | gce | pd | pd_snapshot
     resource_id: str
     region: str
     name: str | None = None

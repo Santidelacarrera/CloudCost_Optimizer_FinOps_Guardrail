@@ -19,7 +19,7 @@ from ..config import Settings
 from ..db import tenant_tx
 from ..domain import policy as pol
 from ..domain import risk as risk_mod
-from ..domain.models import NormalizedResource
+from ..domain.models import VOLUME_SERVICES, NormalizedResource
 from ..domain.rules import Finding, RuleConfig, evaluate_all
 from ..git.base import GitProviderError
 from ..iac.patcher import PatchError, build_patch
@@ -91,7 +91,7 @@ def _apply_unattached_tracking(resources: list[NormalizedResource], hints: dict[
     """Volúmenes sin attachment: si CloudTrail no dio fecha, se usa la primera vez que el servicio los vio huérfanos."""
     now = datetime.now(timezone.utc)
     for r in resources:
-        if r.service != "ebs" or r.attached is not False:
+        if r.service not in VOLUME_SERVICES or r.attached is not False:
             continue
         if r.unattached_days is not None:
             r.attributes["first_unattached_at"] = (now - timedelta(days=r.unattached_days)).isoformat()

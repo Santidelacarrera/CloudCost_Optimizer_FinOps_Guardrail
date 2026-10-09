@@ -9,14 +9,14 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from ..domain.models import NormalizedResource
+from ..domain.models import NormalizedResource, tf_types_for
 
 _RESOURCE_RE = re.compile(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{')
 _HEREDOC_RE = re.compile(r'<<-?\s*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\r?\n')
 _NAME_TAG_RE = re.compile(r'\bName\s*=\s*"([^"\n]+)"')
 _META_RE = re.compile(r'^[ \t]*(count|for_each)[ \t]*=', re.MULTILINE)
 
-SERVICE_TO_TF_TYPE = {"ec2": "aws_instance", "ebs": "aws_ebs_volume", "ebs_snapshot": "aws_ebs_snapshot", "rds": "aws_db_instance"}
+_NAME_ATTR = {"azure", "gcp"}        # Azure y GCP nombran el recurso con `name = "..."`; AWS con la etiqueta Name
 
 
 class HclSyntaxError(ValueError):
@@ -149,6 +149,12 @@ class TfBlock:
         return m.group(1) if m else None
 
     @property
+    def name_literal(self) -> str | None:
+        """Valor literal de `name = "..."` a nivel superior (Azure y GCP)."""
+        lit = self.attr_literal("name")
+        return lit[0] if lit else None
+
+    @property
     def multi_instance(self) -> bool:
         """True si usa count/for_each (un cambio afectaría a varias instancias)."""
         return _META_RE.search(self.top_level_text()) is not None
@@ -214,8 +220,8 @@ class IacIndex:
 
     def match(self, res: NormalizedResource) -> TfBlock | None:
         """Relaciona un recurso real con su bloque IaC: 1) terraform.tfstate, 2) etiqueta Name. Ambigüedad => None."""
-        tf_type = SERVICE_TO_TF_TYPE.get(res.service)
-        if not tf_type:
+        tf_types = tf_types_for(res)
+        if not tf_types:
             return None
         address = self.state_ids.get(res.resource_id)
         if address:
@@ -223,7 +229,8 @@ class IacIndex:
         wanted = (res.tags or {}).get("Name") or res.name
         if not wanted:
             return None
-        candidates = [b for b in self.blocks if b.type == tf_type and b.name_tag == wanted]
+        candidates = [b for b in self.blocks if b.type in tf_types
+                      and (b.name_tag == wanted or (res.provider in _NAME_ATTR and b.name_literal == wanted))]
         return candidates[0] if len(candidates) == 1 else None
 
     def references_to(self, block: TfBlock) -> list[str]:

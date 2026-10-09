@@ -17,10 +17,11 @@ class InstanceSpec:
     vcpu: int
     memory_gib: float
     hourly_usd: float
+    fam: str = ""                       # familia explícita (Azure/GCP no usan el punto de AWS)
 
     @property
     def family(self) -> str:
-        return self.name.split(".", 1)[0]
+        return self.fam or self.name.split(".", 1)[0]
 
     @property
     def monthly_usd(self) -> float:
@@ -38,11 +39,33 @@ _SPECS: list[InstanceSpec] = (
     + _fam("t3", [("nano", 2, 0.5, 0.0052), ("micro", 2, 1, 0.0104), ("small", 2, 2, 0.0208), ("medium", 2, 4, 0.0416),
                   ("large", 2, 8, 0.0832), ("xlarge", 4, 16, 0.1664), ("2xlarge", 8, 32, 0.3328)])
 )
+# Azure (Linux, pago por uso, East US) y GCP (Compute Engine, us-central1, sin descuentos): aproximaciones del mismo orden que AWS.
+_AZURE: list[InstanceSpec] = [
+    InstanceSpec(f"Standard_{size}", vcpu, mem, price, fam)
+    for fam, rows in {
+        "azure-Dsv5": [("D2s_v5", 2, 8, 0.096), ("D4s_v5", 4, 16, 0.192), ("D8s_v5", 8, 32, 0.384), ("D16s_v5", 16, 64, 0.768)],
+        "azure-Esv5": [("E2s_v5", 2, 16, 0.126), ("E4s_v5", 4, 32, 0.252), ("E8s_v5", 8, 64, 0.504), ("E16s_v5", 16, 128, 1.008)],
+        "azure-Fsv2": [("F2s_v2", 2, 4, 0.085), ("F4s_v2", 4, 8, 0.169), ("F8s_v2", 8, 16, 0.338), ("F16s_v2", 16, 32, 0.677)],
+        "azure-Bms": [("B2s", 2, 4, 0.0416), ("B2ms", 2, 8, 0.0832), ("B4ms", 4, 16, 0.166), ("B8ms", 8, 32, 0.333)],
+    }.items() for size, vcpu, mem, price in rows
+]
+_GCP: list[InstanceSpec] = [
+    InstanceSpec(f"{fam}-{n}", n, n * ratio, round(n * per_vcpu, 4), f"gcp-{fam}")
+    for fam, ratio, per_vcpu in (("n2-standard", 4, 0.0485), ("n2-highmem", 8, 0.0655), ("e2-standard", 4, 0.0335))
+    for n in (2, 4, 8, 16)
+]
+_SPECS.extend(_AZURE + _GCP)
 INSTANCE_SPECS: dict[str, InstanceSpec] = {s.name: s for s in _SPECS}
 
 # USD por GB-mes
-VOLUME_GB_MONTH = {"gp2": 0.10, "gp3": 0.08, "io1": 0.125, "io2": 0.125, "st1": 0.045, "sc1": 0.015, "standard": 0.05}
+VOLUME_GB_MONTH = {"gp2": 0.10, "gp3": 0.08, "io1": 0.125, "io2": 0.125, "st1": 0.045, "sc1": 0.015, "standard": 0.05,
+                   # Azure Managed Disks (por SKU; el cobro real es por escalón de tamaño: aproximación lineal)
+                   "standard_lrs": 0.045, "standardssd_lrs": 0.075, "premium_lrs": 0.15, "standard_zrs": 0.056,
+                   "standardssd_zrs": 0.094, "premium_zrs": 0.19,
+                   # GCP Persistent Disk
+                   "pd-standard": 0.04, "pd-balanced": 0.10, "pd-ssd": 0.17}
 SNAPSHOT_GB_MONTH = 0.05
+SNAPSHOT_GB_MONTH_BY_PROVIDER = {"aws": 0.05, "azure": 0.05, "gcp": 0.026}
 
 
 def instance_spec(instance_type: str | None) -> InstanceSpec | None:
@@ -70,9 +93,9 @@ def volume_monthly_cost(volume_type: str | None, size_gb: float | None) -> float
     return round(VOLUME_GB_MONTH.get((volume_type or "gp2").lower(), 0.10) * float(size_gb), 2)
 
 
-def snapshot_monthly_cost(size_gb: float | None) -> float:
+def snapshot_monthly_cost(size_gb: float | None, provider: str = "aws") -> float:
     """Cota superior: los snapshots son incrementales, el costo real suele ser menor."""
-    return round(SNAPSHOT_GB_MONTH * float(size_gb or 0), 2)
+    return round(SNAPSHOT_GB_MONTH_BY_PROVIDER.get(provider, SNAPSHOT_GB_MONTH) * float(size_gb or 0), 2)
 
 
 # RDS (MySQL/PostgreSQL, us-east-1, On-Demand, Single-AZ): USD por hora de instancia y USD por GB-mes de almacenamiento gp2/gp3.
