@@ -5,7 +5,7 @@
 cd infrastructure/terraform/aws-readonly-role
 terraform init && terraform apply -var trusted_principal_arn=<ARN de CloudCost> -var external_id=<valor secreto>
 ```
-Guarda `external_id` en tu gestor de secretos y registra la cuenta (`POST /api/v1/cloud-accounts`) con `role_arn` y `external_id_ref` = `env:NOMBRE` o `aws-sm:id`. 
+Guarda `external_id` en tu gestor de secretos y registra la cuenta (`POST /api/v1/cloud-accounts`) con `role_arn` y `external_id_ref` = `env:CC_SECRET_NOMBRE` (variable que define el operador; solo despliegues de una organización) o `aws-sm:cloudcost/<org_id>/nombre`. 
 **Costos reales (Cost Explorer).** Por defecto (`enable_cost_explorer=true`, `AWS_COST_EXPLORER_RESOURCES=true`) el ahorro se calcula con el costo REAL de cada recurso de los últimos 14 días (`GetCostAndUsageWithResources`, límite de AWS), no con la tabla de precios. Requisitos y límites:
 - Habilita *Cost Explorer* y *Resource-level data* en la cuenta de pagos (Billing → Cost Explorer → Settings). Sin eso, o sin el permiso `ce:*`, el escaneo sigue funcionando con la estimación y deja un aviso en `scans.stats.warnings`; las recomendaciones indican «Costo ESTIMADO».
 - Historial largo (hasta 12 meses): define `AWS_COST_TAG_KEY` con una etiqueta de asignación de costos activada en Billing (p. ej. `Name` o `app`). Se guarda la serie mensual y la tendencia por valor de etiqueta en `evidence.cost_basis.history`; es el costo agregado de todos los recursos con esa etiqueta, no se reparte entre recursos.
@@ -16,7 +16,7 @@ Memoria: requiere CloudWatch Agent (`CWAgent`); sin ella las reglas de downsize 
 
 ## 2. Conectar GitHub
 1. Token fine-grained con permisos *Contents: write* y *Pull requests: write* solo en el repo de IaC (sin permiso de merge).
-2. Registra el repo (`POST /api/v1/repositories`, `token_ref: env:GITHUB_TOKEN`).
+2. Registra el repo (`POST /api/v1/repositories`, `token_ref: env:CC_SECRET_GITHUB_TOKEN`).
 3. Webhook (evento *Pull requests*): `https://<api>/api/v1/webhooks/github/<org_id>`, secreto = `GITHUB_WEBHOOK_SECRET`.
 
 **GitLab** (gitlab.com o autoalojado): mismo flujo con Merge Requests y el mismo parcheo por offsets; nunca se fusiona automáticamente.

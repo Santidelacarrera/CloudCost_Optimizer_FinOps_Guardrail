@@ -1,7 +1,7 @@
 # Seguridad
 
 - **Solo lectura por defecto / mínimo privilegio**: el rol AWS (`infrastructure/terraform/aws-readonly-role`) no concede escrituras; se asume con `ExternalId`.
-- **Secretos por referencia**: la BD guarda `env:NOMBRE` o `aws-sm:id`, nunca valores (validado en la API).
+- **Secretos por referencia**: la BD guarda `env:CC_SECRET_NOMBRE` o `aws-sm:cloudcost/<org_id>/nombre`, nunca valores (validado en la API). El prefijo es obligatorio y se vuelve a comprobar al resolver: una referencia escrita por un usuario no puede leer `AUTH_PEPPER`, `DATABASE_URL` ni el secreto de otra organización (el valor se envía a terceros como ExternalId o token Git). Hallazgo del modelo de amenazas, corregido con pruebas en `tests/unit/test_secret_refs.py`.
 - **LLM**: sin credenciales de nube, contexto en allowlist, salida validada (JSON Schema + reglas de negocio), no ejecuta acciones. Apagado por defecto.
 - **Sin auto-merge ni despliegue**: la plataforma crea PRs; el merge y el despliegue son de tu repo/CI. Destructivo en producción ⇒ aprobación reforzada.
 - **Auditoría inmutable**: sin UPDATE/DELETE/TRUNCATE para el rol de aplicación (permisos + triggers), cadena sha256 verificable.
