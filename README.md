@@ -237,7 +237,6 @@ El diseño de seguridad asume un entorno hostil y opera bajo el principio de **F
 > 🔒 **Para un análisis profundo del modelo de amenazas, criptografía, autenticación y mitigaciones, lee nuestro [Whitepaper de Seguridad y Modelo de Amenazas](docs/security.md).**
 
 *Si encuentras una vulnerabilidad, no publiques los detalles en una incidencia abierta: avisa a los mantenedores por un canal privado.*
-
 ---
 
 ## Calidad y CI
