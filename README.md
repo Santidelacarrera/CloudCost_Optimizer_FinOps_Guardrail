@@ -1,6 +1,41 @@
 <div align="center">
 
-# CloudCost Optimizer & FinOps Guardrail
+
+# CloudCost Optimizer & FinOps Guardrail 💸🛡️
+
+> **Detecta el desperdicio en tu infraestructura cloud y conviértelo en ahorro mediante un Pull Request. Riesgo cero. Cero permisos de escritura en producción.**
+
+AWS · Azure · GCP · Kubernetes — Terraform · Helm — GitHub · GitLab
+
+---
+
+## 🛑 El Problema: El dilema del FinOps tradicional
+
+Las empresas hoy pierden miles de dólares al mes en instancias EC2 sobredimensionadas, bases de datos ociosas y discos huérfanos. ¿El motivo? **A los equipos de infraestructura les aterra apagar recursos y romper producción.**
+
+Las herramientas FinOps del mercado te obligan a elegir entre dos opciones inaceptables:
+1. **El Dashboard Pasivo:** Te muestran un gráfico alarmante diciendo *"Tienes USD 40,000 de desperdicio"*, pero te dejan el trabajo manual de buscar el código de Terraform y parchearlo.
+2. **El "God-Mode" Inseguro:** Te ofrecen un botón de *"Auto-Remediar"* que exige darle permisos de escritura en producción a una herramienta de terceros. Ningún CTO en su sano juicio aprueba esto en una empresa con auditorías estrictas.
+
+## 💡 La Solución: FinOps Defensivo y GitOps
+
+**CloudCost Optimizer** adopta una postura radicalmente distinta: **la plataforma nunca escribe en tu nube.** 
+
+Operamos bajo el principio de *Mínimo Privilegio (Solo Lectura)*. La plataforma escanea tu nube, correlaciona el costo real con la utilización, lee tu código de infraestructura (IaC) y **genera automáticamente el parche de código como un Pull Request en tu repositorio**.
+
+Tú lo revisas. Tú lo apruebas. Tú haces el merge usando tus propios pipelines (CI/CD). La responsabilidad y el control nunca salen de tu equipo.
+
+## 🚀 Valor de Negocio (Por qué CloudCost)
+
+* 💰 **ROI Inmediato y Explicable:** No arrojamos alertas vacías. Cada hallazgo incluye la métrica de uso exacta, el costo financiero real asociado y el ahorro proyectado tras aplicar el parche.
+* 🛡️ **Seguridad Zero Trust:** Funciona 100% con roles de *Solo Lectura*. Si nos hackean, tus servidores de producción en AWS/Azure están intactos porque no tenemos la llave para apagarlos.
+* 🤝 **Sin Fricción Operativa:** No obligamos a tus ingenieros a usar una plataforma nueva para aplicar cambios. Les entregamos el trabajo hecho directamente en GitHub o GitLab.
+* ⚖️ **Gobernanza y Compliance:** Auditoría inmutable encadenada por hashes (append-only) y aprobación reforzada. Las acciones destructivas requieren la firma digital de dos personas (incluyendo un rol SRE/Admin) antes de liberar el PR.
+
+---
+
+### ⚙️ El Pipeline de Optimización
+`Detectar → Analizar → Explicar → Proponer → Validar (OPA/Rego) → Aprobar (Humano) → Crear PR → Desplegar (Tu CI/CD) → Verificar Ahorro`
 
 **Detecta el desperdicio en tu infraestructura cloud y lo corrige por Pull Request — sin tocar producción jamás.**
 
