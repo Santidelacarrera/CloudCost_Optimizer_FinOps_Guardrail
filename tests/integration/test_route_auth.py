@@ -82,10 +82,11 @@ def client():
 
 @pytest.fixture(scope="module")
 def routes(client):
-    """[(método, plantilla de ruta)] de todas las rutas HTTP de la aplicación."""
-    from fastapi.routing import APIRoute
-    out = sorted({(m, r.path) for r in client.app.routes if isinstance(r, APIRoute) for m in r.methods if m not in ("HEAD", "OPTIONS")})
-    assert len(out) > 40, "la enumeración de rutas no encontró las esperadas"
+    """[(método, plantilla de ruta)] de todas las rutas HTTP de la aplicación, tomadas del esquema OpenAPI generado por FastAPI
+    (independiente de cómo se anidan los routers en cada versión del framework)."""
+    paths = client.app.openapi()["paths"]
+    out = sorted((m.upper(), path) for path, ops in paths.items() for m in ops if m.upper() in ("GET", "POST", "PUT", "PATCH", "DELETE"))
+    assert len(out) > 40, f"la enumeración de rutas no encontró las esperadas: {out}"
     return out
 
 
