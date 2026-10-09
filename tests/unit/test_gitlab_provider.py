@@ -59,7 +59,8 @@ class FakeGitLab(BaseHTTPRequestHandler):
             s["tree_queries"].append(q)
             entries = {1: [{"path": "infra/main.tf", "type": "blob"}, {"path": "infra/readme.md", "type": "blob"},
                            {"path": "infra", "type": "tree"}],
-                       2: [{"path": "infra/net/vpc.tf", "type": "blob"}]}[page]
+                       2: [{"path": "infra/net/vpc.tf", "type": "blob"}, {"path": "infra/charts/app/values.yaml", "type": "blob"},
+                           {"path": "infra/k8s/deployment.yaml", "type": "blob"}]}[page]
             return self._send(200, entries, {"X-Next-Page": "2" if page == 1 else ""})
         m = re.fullmatch(rf"{re.escape(base)}/repository/files/(.+)/raw", url.path)
         if m:
@@ -70,6 +71,8 @@ class FakeGitLab(BaseHTTPRequestHandler):
                 return self._send(200, b"\xff\xfe\x00")
             if path == "infra/net/vpc.tf":
                 return self._send(200, "# vpc ñ\n".encode())
+            if path == "infra/charts/app/values.yaml":
+                return self._send(200, b"replicaCount: 3\n")
             return self._send(200, s["branches"].get(ref, FILE).encode())
         if url.path == f"{base}/merge_requests":
             return self._send(200, [mr for mr in s["mrs"] if mr["source_branch"] == q["source_branch"]])
@@ -122,7 +125,7 @@ REPO = "grupo/sub/proyecto"
 def test_list_files_follows_pagination_filters_and_uses_path_filter(gitlab):
     gl, st = gitlab
     files = gl.list_files(REPO, "main", ["infra"])
-    assert list(files) == ["infra/main.tf", "infra/net/vpc.tf"]               # excluye readme.md y el directorio
+    assert list(files) == ["infra/main.tf", "infra/net/vpc.tf", "infra/charts/app/values.yaml"]   # incluye values de Helm; excluye readme.md, el directorio y otros YAML
     assert files["infra/net/vpc.tf"] == "# vpc ñ\n"                           # UTF-8 correcto aunque no haya charset
     assert [q["page"] for q in st["tree_queries"]] == ["1", "2"] and st["tree_queries"][0]["path"] == "infra"
     assert st["tree_queries"][0]["recursive"] == "true"

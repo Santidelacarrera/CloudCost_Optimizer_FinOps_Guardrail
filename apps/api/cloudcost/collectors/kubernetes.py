@@ -109,7 +109,7 @@ class KubernetesCollector:
                 base = validate_prometheus_url(self.cfg.get("prometheus_url", ""))
             except PrometheusUrlError as exc:
                 raise PermissionError(str(exc)) from exc               # configuración inválida: no tiene sentido reintentar
-            token = self.secrets.resolve(self.cfg.get("credentials_ref")) if self.cfg.get("credentials_ref") else ""
+            token = self.secrets.resolve(self.cfg.get("credentials_ref"), self.account.get("organization_id")) if self.cfg.get("credentials_ref") else ""
             self._base = base
             self._client = BearerClient(lambda: token or "", {urlparse(base).hostname}, allow_http=True, timeout=QUERY_TIMEOUT)
         return self._client

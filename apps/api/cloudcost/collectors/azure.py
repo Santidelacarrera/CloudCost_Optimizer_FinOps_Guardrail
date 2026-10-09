@@ -53,7 +53,7 @@ class AzureCollector:
     def _http(self) -> JsonGetter:
         if self._client is None:
             cfg = self.account.get("provider_config") or {}
-            secret = self.secrets.resolve(cfg.get("credentials_ref"))
+            secret = self.secrets.resolve(cfg.get("credentials_ref"), self.account.get("organization_id"))
             if not secret:
                 raise PermissionError("Falta el secreto del service principal de Azure (credentials_ref)")
             try:

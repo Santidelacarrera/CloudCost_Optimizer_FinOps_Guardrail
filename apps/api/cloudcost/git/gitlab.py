@@ -11,7 +11,7 @@ from urllib.parse import quote
 
 import requests
 
-from .base import ChangeRequest, GitProviderError
+from .base import ChangeRequest, GitProviderError, is_iac_file
 
 log = logging.getLogger(__name__)
 _RETRY_STATUS = {429, 502, 503, 504}
@@ -87,10 +87,10 @@ class GitLabProvider:
         wanted: list[str] = []
         for prefix in dict.fromkeys(p.strip("/") for p in (paths or ["."])):
             for e in self._tree(repo, ref, prefix):
-                if e.get("type") == "blob" and e["path"].endswith(".tf") and e["path"] not in wanted:
+                if e.get("type") == "blob" and is_iac_file(e["path"]) and e["path"] not in wanted:
                     wanted.append(e["path"])
         if len(wanted) > MAX_FILES:
-            raise GitProviderError(f"Demasiados archivos .tf ({len(wanted)} > {MAX_FILES}); acota iac_paths")
+            raise GitProviderError(f"Demasiados archivos de IaC ({len(wanted)} > {MAX_FILES}); acota iac_paths")
         out: dict[str, str] = {}
         for p in wanted:
             text = self.get_file(repo, p, ref)
