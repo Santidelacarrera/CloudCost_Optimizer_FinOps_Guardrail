@@ -16,14 +16,20 @@ from ..schemas import (
     MemberPatchIn,
     MfaConfirmIn,
     MfaEnableIn,
+    MfaPasskeyIn,
+    MfaPasskeyOptionsIn,
     MfaSetupIn,
     MfaVerifyIn,
+    PasskeyLoginIn,
+    PasskeyRegisterIn,
+    PasskeyRegisterOptionsIn,
+    PasskeyRemoveIn,
     ResetPasswordIn,
     SignupIn,
     TokenIn,
 )
 from ..security import Principal, require, require_session
-from ..services import accounts
+from ..services import accounts, passkeys
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -55,7 +61,7 @@ def _flush(settings: Settings, outbox: list[mailer.Mail], bg: BackgroundTasks) -
 @router.get("/config")
 def config(settings: Settings = Depends(get_settings)):
     return {"local_enabled": settings.auth_local_enabled, "signup_open": settings.auth_signup_open, "dev_login_enabled": settings.auth_mode == "dev" and settings.env != "production",
-            "password_min_length": 12, "mfa_issuer": settings.auth_mfa_issuer}
+            "password_min_length": 12, "mfa_issuer": settings.auth_mfa_issuer, "passkeys_enabled": settings.passkeys_enabled}
 
 
 @router.post("/signup", status_code=202)
@@ -97,6 +103,59 @@ def mfa_verify(body: MfaVerifyIn, request: Request, bg: BackgroundTasks, setting
     out = accounts.mfa_verify(settings, pending_token=body.pending_token, code=body.code, ip=ip, ua=ua, outbox=outbox)
     _flush(settings, outbox, bg)
     return out
+
+
+# ---- llaves de acceso (WebAuthn)
+@router.post("/passkey/login/options")
+def passkey_login_options(request: Request, settings: Settings = Depends(_enabled)):
+    ip, _ = _client(request, settings)
+    return passkeys.login_options(settings, ip)
+
+
+@router.post("/passkey/login")
+def passkey_login(body: PasskeyLoginIn, request: Request, settings: Settings = Depends(_enabled)):
+    ip, ua = _client(request, settings)
+    out = passkeys.login_finish(settings, credential=body.credential.model_dump(), ip=ip, ua=ua)
+    metrics.AUTH_LOGINS.labels("passkey_ok").inc()
+    return out
+
+
+@router.post("/mfa/passkey/options")
+def mfa_passkey_options(body: MfaPasskeyOptionsIn, settings: Settings = Depends(_enabled)):
+    return passkeys.mfa_options(settings, body.pending_token)
+
+
+@router.post("/mfa/passkey")
+def mfa_passkey(body: MfaPasskeyIn, request: Request, settings: Settings = Depends(_enabled)):
+    ip, ua = _client(request, settings)
+    return passkeys.mfa_finish(settings, pending_token=body.pending_token, credential=body.credential.model_dump(), ip=ip, ua=ua)
+
+
+@router.get("/passkeys")
+def passkeys_list(p: Principal = Depends(require_session)):
+    return passkeys.list_passkeys(p)
+
+
+@router.post("/passkeys/register/options")
+def passkeys_register_options(body: PasskeyRegisterOptionsIn, p: Principal = Depends(require_session), settings: Settings = Depends(_enabled)):
+    return passkeys.register_options(settings, p, body.password)
+
+
+@router.post("/passkeys/register", status_code=201)
+def passkeys_register(body: PasskeyRegisterIn, bg: BackgroundTasks, p: Principal = Depends(require_session), settings: Settings = Depends(_enabled)):
+    outbox: list[mailer.Mail] = []
+    out = passkeys.register_finish(settings, p, body.credential.model_dump(), body.name, outbox)
+    _flush(settings, outbox, bg)
+    return out
+
+
+@router.post("/passkeys/{passkey_id}/remove", status_code=204)
+def passkeys_remove(passkey_id: str, body: PasskeyRemoveIn, bg: BackgroundTasks, p: Principal = Depends(require_session),
+                    settings: Settings = Depends(_enabled)):
+    outbox: list[mailer.Mail] = []
+    passkeys.remove_passkey(settings, p, passkey_id, body.password, outbox)
+    _flush(settings, outbox, bg)
+    return Response(status_code=204)
 
 
 @router.post("/logout", status_code=204)

@@ -5,6 +5,7 @@ import psycopg.errors
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 
+from .. import onboarding
 from ..config import Settings, get_settings
 from ..db import tenant_tx
 from ..schemas import CloudAccountIn, RepositoryIn
@@ -65,3 +66,22 @@ def create_repository(body: RepositoryIn, p: Principal = Depends(require(*MANAGE
         return row
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(409, "El repositorio ya está registrado") from exc
+
+
+@router.post("/onboarding/aws/cloudformation")
+def start_aws_onboarding(p: Principal = Depends(require(*MANAGE_CONNECTIONS)), settings: Settings = Depends(get_settings),
+                         enable_cost_explorer: bool = True):
+    """Genera un ExternalId nuevo y el enlace de un clic para desplegar el rol de solo lectura en la cuenta del cliente.
+
+    El ExternalId solo se devuelve aquí, una vez; no se guarda. No se crea nada en AWS.
+    """
+    try:
+        info = onboarding.launch_info(template_url=settings.aws_onboarding_template_url,
+                                      principal_arn=settings.aws_platform_principal_arn,
+                                      region=settings.aws_onboarding_stack_region, enable_cost_explorer=enable_cost_explorer)
+    except onboarding.OnboardingError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    with tenant_tx(p.org_id) as conn:
+        audit.record(conn, p.org_id, onboarding.ONBOARDING_STARTED, actor=audit.user_actor(p), entity_type="cloud_account",
+                     payload={"provider": "aws", "method": "cloudformation", "region": info["region"]})
+    return info

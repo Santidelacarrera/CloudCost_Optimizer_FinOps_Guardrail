@@ -69,6 +69,9 @@ class RuleConfig:
     k8s_min_cpu_cores: float = 0.05
     k8s_min_memory_mib: int = 64
     min_monthly_savings: float = 5.0
+    # Si es True, no se propone apagar/reducir/eliminar nada cuyo costo sea solo una estimación por tabla de precios
+    # (exige costo real: Cost Explorer o importación). Por defecto se propone igual, marcando la base del costo.
+    require_verified_cost: bool = False
 
     @classmethod
     def from_overrides(cls, overrides: dict[str, Any] | None) -> "RuleConfig":
@@ -133,6 +136,24 @@ def _current_cost(res: NormalizedResource) -> float:
     return 0.0
 
 
+VERIFIED_COST_SOURCES = frozenset({"cost_explorer", "import"})
+
+
+def _cost_unverified(res: NormalizedResource, cfg: RuleConfig) -> bool:
+    return cfg.require_verified_cost and res.cost_source not in VERIFIED_COST_SOURCES
+
+
+def _cost_basis(res: NormalizedResource) -> dict[str, Any]:
+    """Origen del costo usado para calcular el ahorro: real (Cost Explorer/importación) o estimado por tabla de precios."""
+    basis = dict(res.attributes.get("cost_basis") or {})
+    basis.setdefault("source", res.cost_source)
+    basis["verified"] = res.cost_source in VERIFIED_COST_SOURCES
+    history = res.attributes.get("cost_history")
+    if history:
+        basis["history"] = {k: history[k] for k in ("scope", "tag_key", "tag_value", "monthly", "trend_pct") if k in history}
+    return basis
+
+
 def _clamp(value: float, lo: float = 0.0, hi: float = 0.97) -> float:
     return round(max(lo, min(hi, value)), 3)
 
@@ -167,6 +188,8 @@ def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         return None
     if res.memory_avg is None and cfg.require_memory_metric:
         return None
+    if _cost_unverified(res, cfg):
+        return None
     if res.cpu_avg >= cfg.cpu_downsize_threshold:
         return None
     if res.memory_avg is not None and res.memory_avg >= cfg.mem_downsize_threshold:
@@ -200,6 +223,7 @@ def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
             "observation_days": res.observation_days, "environment": res.environment,
             "current_vcpu": spec.vcpu, "current_memory_gib": spec.memory_gib,
             "target_vcpu": best.target.vcpu, "target_memory_gib": best.target.memory_gib,
+            "cost_basis": _cost_basis(res),
             "projected_cpu_pct": best.cpu_pct, "projected_mem_pct": best.mem_pct, "projected_peak_pct": best.peak_pct,
             "thresholds": {"cpu": cfg.cpu_downsize_threshold, "memory": cfg.mem_downsize_threshold,
                            "target_cpu_ceiling": cfg.target_cpu_ceiling, "target_mem_ceiling": cfg.target_mem_ceiling},
@@ -217,6 +241,8 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     if res.cpu_max is not None and res.cpu_max >= cfg.idle_cpu_peak_threshold:
         return None
     if res.memory_avg is not None and res.memory_avg >= cfg.idle_mem_ceiling:
+        return None
+    if _cost_unverified(res, cfg):
         return None
     cost = _current_cost(res)
     if cost < cfg.min_monthly_savings:
@@ -246,7 +272,7 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
         params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"cpu_avg": res.cpu_avg, "cpu_max": res.cpu_max, "memory_avg": res.memory_avg,
                   "observation_days": res.observation_days, "environment": res.environment,
-                  "instance_type": res.instance_type},
+                  "instance_type": res.instance_type, "cost_basis": _cost_basis(res)},
         alternatives=alternatives,
     )
 
@@ -254,7 +280,7 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
 def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     if res.service not in VOLUME_SERVICES or res.attached is not False or res.state != "available" or is_protected(res.tags):
         return None
-    if res.unattached_days is None or res.unattached_days < cfg.orphan_volume_days:
+    if res.unattached_days is None or res.unattached_days < cfg.orphan_volume_days or _cost_unverified(res, cfg):
         return None
     cost = _current_cost(res)
     if cost < cfg.min_monthly_savings:
@@ -271,7 +297,8 @@ def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
         params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"unattached_days": res.unattached_days, "size_gb": res.size_gb, "volume_type": res.volume_type,
-                  "environment": res.environment, "threshold_days": cfg.orphan_volume_days},
+                  "environment": res.environment, "threshold_days": cfg.orphan_volume_days,
+                  "cost_basis": _cost_basis(res)},
         alternatives=[{"action": "SNAPSHOT_THEN_DELETE",
                        "description": "Tomar un snapshot final antes de eliminar, si los datos pudieran necesitarse."}],
     )
@@ -282,7 +309,7 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         return None
     if res.attributes.get("managed_by") or res.attributes.get("ami_ids"):
         return None          # gestionado por un servicio de copias (AWS Backup/DLM, Azure Backup, programación de GCP) o usado por una imagen: no es seguro proponerlo
-    if res.age_days is None or res.age_days < cfg.old_snapshot_days:
+    if res.age_days is None or res.age_days < cfg.old_snapshot_days or _cost_unverified(res, cfg):
         return None
     cost = _current_cost(res)
     if cost < cfg.min_monthly_savings:
@@ -299,7 +326,7 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
         params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"age_days": res.age_days, "size_gb": res.size_gb, "environment": res.environment,
-                  "savings_basis": "cota superior (snapshots incrementales)"},
+                  "savings_basis": "cota superior (snapshots incrementales)", "cost_basis": _cost_basis(res)},
     )
 
 

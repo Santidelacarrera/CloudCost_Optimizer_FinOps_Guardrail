@@ -107,8 +107,9 @@ class CloudAccountIn(BaseModel):
 
 
 class RepositoryIn(BaseModel):
-    provider: Literal["github", "local"]
-    full_name: str = Field(pattern=r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+    provider: Literal["github", "gitlab", "local"]
+    # GitHub/local: `propietario/repo`. GitLab admite subgrupos: `grupo/subgrupo/proyecto` (hasta 20 niveles).
+    full_name: str = Field(pattern=r"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+){1,19}$")
     default_branch: str = Field(default="main", pattern=r"^[A-Za-z0-9._/-]{1,100}$")
     iac_paths: list[str] = Field(default_factory=lambda: ["."], max_length=20)
     token_ref: str | None = None
@@ -119,6 +120,15 @@ class RepositoryIn(BaseModel):
         if v is not None and not _REF.match(v):
             raise ValueError("Usa una referencia de secreto (env:NOMBRE o aws-sm:id), nunca el token")
         return v
+
+    @model_validator(mode="after")
+    def _check_full_name(self) -> "RepositoryIn":
+        parts = self.full_name.split("/")
+        if any(p in (".", "..") for p in parts):
+            raise ValueError("Nombre de repositorio inválido")
+        if self.provider != "gitlab" and len(parts) != 2:
+            raise ValueError("Usa el formato propietario/repositorio (los subgrupos solo existen en GitLab)")
+        return self
 
     @field_validator("iac_paths")
     @classmethod
@@ -199,6 +209,38 @@ class ResetPasswordIn(BaseModel):
 class ChangePasswordIn(BaseModel):
     current_password: str = Field(min_length=1, max_length=1024)
     new_password: str = Field(min_length=1, max_length=1024)
+
+
+class PasskeyCredentialIn(BaseModel):
+    """Respuesta de `navigator.credentials.create/get` con los ArrayBuffer ya en base64url (la validación fina está en auth/webauthn.py)."""
+    id: str = Field(min_length=1, max_length=2048)
+    response: dict[str, Any]
+
+
+class PasskeyRegisterOptionsIn(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class PasskeyRegisterIn(BaseModel):
+    credential: PasskeyCredentialIn
+    name: str | None = Field(default=None, max_length=60)
+
+
+class PasskeyLoginIn(BaseModel):
+    credential: PasskeyCredentialIn
+
+
+class MfaPasskeyOptionsIn(BaseModel):
+    pending_token: str = Field(min_length=10, max_length=200)
+
+
+class MfaPasskeyIn(BaseModel):
+    pending_token: str = Field(min_length=10, max_length=200)
+    credential: PasskeyCredentialIn
+
+
+class PasskeyRemoveIn(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class MfaSetupIn(BaseModel):

@@ -185,6 +185,8 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
     collector = collector_factory(
         account, secrets=secrets, demo_enabled=settings.demo_enabled,
         use_cost_explorer=settings.aws_cost_explorer_resources,
+        cost_options={"cost_tag_key": settings.aws_cost_tag_key, "cost_history_months": settings.aws_cost_history_months,
+                      "cost_metric": settings.aws_cost_metric},
         on_api_error=lambda api: metrics.CLOUD_API_ERRORS.labels(account["provider"], api).inc())
     result = collector.collect()
     warnings += result.warnings

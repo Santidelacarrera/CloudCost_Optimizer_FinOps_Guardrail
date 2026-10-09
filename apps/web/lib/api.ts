@@ -41,6 +41,22 @@ export const api = <T,>(path: string, init?: { method?: string; body?: unknown }
 /** Pantallas de acceso (login, registro, recuperación): un 401 aquí es un error normal, no una sesión vencida. */
 export const authApi = <T,>(path: string, init?: { method?: string; body?: unknown }) => request<T>(`/api/auth/${path}`, init);
 
+/** Descarga un archivo del API (informes PDF/Excel) con la sesión actual; los errores se muestran como texto, no como JSON suelto. */
+export async function download(path: string, fallbackName: string) {
+  const r = await fetch(`/api/proxy/${path}`, { cache: "no-store" });
+  if (r.status === 401) { await expireSession(); throw new ApiError(401, "Sesión vencida"); }
+  if (!r.ok) {
+    let msg = `Error ${r.status}`;
+    try { const d = (await r.json())?.detail; if (typeof d === "string") msg = d; } catch { /* sin cuerpo JSON */ }
+    throw new ApiError(r.status, msg);
+  }
+  const name = /filename="([^"]+)"/.exec(r.headers.get("content-disposition") ?? "")?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export const usd = (v: string | number | null | undefined) =>
   new Intl.NumberFormat("es-ES", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(Number(v ?? 0));
 export const pct = (v: string | number) => `${Math.round(Number(v) * 100)} %`;

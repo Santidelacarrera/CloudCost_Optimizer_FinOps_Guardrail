@@ -190,3 +190,13 @@ jobs:
         run: docker compose --env-file .env.production.example -f docker-compose.prod.yml --profile monitoring config -q
       - name: Los scripts de copias son sintaxis válida
         run: for f in scripts/*.sh; do sh -n "$f"; done
+
+  cloudformation:
+    # La plantilla de onboarding de un clic: lint oficial (cfn-lint) y que el pytest de paridad con Terraform siga válido.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install "cfn-lint>=1.20,<2"
+      - run: cfn-lint --version && cfn-lint infrastructure/cloudformation/readonly-role.yaml

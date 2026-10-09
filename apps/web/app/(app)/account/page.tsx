@@ -4,6 +4,7 @@ import PageHead from "@/components/PageHead";
 import PasswordField, { checkPassword } from "@/components/PasswordField";
 import { ApiError, api, authApi, fmtDate } from "@/lib/api";
 import { ROLE_LABEL, type Me } from "@/lib/roles";
+import { createPasskey, passkeyErrorMessage, passkeysSupported } from "@/lib/webauthn";
 
 type Session = { id: string; ip: string | null; user_agent: string | null; created_at: string; last_seen_at: string; current: boolean };
 
@@ -47,6 +48,7 @@ export default function Account() {
       </section>
       <PasswordSection email={me.email} name={me.full_name} onDone={changed} />
       <MfaSection me={me} onChanged={changed} />
+      <PasskeysSection onChanged={changed} />
       <SessionsSection />
     </>
   );
@@ -196,6 +198,87 @@ function MfaSection({ me, onChanged }: { me: Me; onChanged: () => void }) {
             </div>
           </form>
         )}
+      </div>
+    </section>
+  );
+}
+
+type Passkey = { id: string; name: string; created_at: string; last_used_at: string | null; synced: boolean };
+
+function PasskeysSection({ onChanged }: { onChanged: () => void }) {
+  const [items, setItems] = useState<Passkey[]>([]);
+  const [step, setStep] = useState<"idle" | "add" | "remove">("idle");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [target, setTarget] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+  const [supported, setSupported] = useState(false);
+  const load = useCallback(() => { api<Passkey[]>("auth/passkeys").then(setItems).catch((e) => setErr(msgOf(e))); }, []);
+  useEffect(() => { load(); setSupported(passkeysSupported()); }, [load]);
+
+  const reset = () => { setStep("idle"); setPassword(""); setName(""); setTarget(null); setErr(""); };
+  const add = async () => {
+    setBusy(true); setErr(""); setOk("");
+    try {
+      const options = await api<Record<string, unknown>>("auth/passkeys/register/options", { method: "POST", body: { password } });
+      const credential = await createPasskey(options);
+      await api("auth/passkeys/register", { method: "POST", body: { credential, name: name.trim() || undefined } });
+      reset(); setOk("Llave de acceso añadida."); load(); onChanged();
+    } catch (e: unknown) { setErr(passkeyErrorMessage(e)); } finally { setBusy(false); }
+  };
+  const remove = async () => {
+    if (!target) return;
+    setBusy(true); setErr(""); setOk("");
+    try {
+      await api(`auth/passkeys/${target}/remove`, { method: "POST", body: { password } });
+      reset(); setOk("Llave de acceso quitada. Cerramos tus otras sesiones."); load(); onChanged();
+    } catch (e: unknown) { setErr(msgOf(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <section className="section" id="passkeys">
+      <header>
+        <h2>Llaves de acceso</h2>
+        <p>Entra con tu huella, rostro, PIN o una llave de seguridad en lugar de un código. No se pueden suplantar con un sitio falso y funcionan como segundo factor.</p>
+      </header>
+      <div className="stack" style={{ maxWidth: 560 }}>
+        {ok && <p className="note ok" role="status">{ok}</p>}
+        {items.length > 0 && (
+          <ul className="list">
+            {items.map((k) => (
+              <li key={k.id}>
+                <div className="t">
+                  <b>{k.name} {k.synced && <span className="badge me">Sincronizada</span>}</b>
+                  <span>Creada {fmtDate(k.created_at)}{k.last_used_at ? `, usada por última vez ${fmtDate(k.last_used_at)}` : ", sin usar todavía"}</span>
+                </div>
+                <button className="secondary" onClick={() => { setStep("remove"); setTarget(k.id); setErr(""); setOk(""); }}>Quitar</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {step === "idle" && (supported
+          ? <div><button onClick={() => { setStep("add"); setOk(""); }}>Añadir una llave de acceso</button></div>
+          : <p className="note info">Este navegador no admite llaves de acceso. Prueba con uno actualizado.</p>)}
+        {step !== "idle" && (
+          <form className="step" onSubmit={(e) => { e.preventDefault(); if (step === "add") add(); else remove(); }}>
+            <b>{step === "add" ? "Confirma que eres tú" : "Confirma con tu contraseña para quitarla"}</b>
+            <PasswordField label="Tu contraseña" value={password} onChange={setPassword} autoComplete="current-password" />
+            {step === "add" && (
+              <div className="field">
+                <label htmlFor="pk-name">Nombre (opcional)</label>
+                <input id="pk-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} placeholder="Ej.: Portátil de la oficina" />
+              </div>
+            )}
+            {err && <p className="note bad" role="alert">{err}</p>}
+            <div className="row">
+              <button type="submit" disabled={busy || !password}>{busy ? "Esperando…" : step === "add" ? "Continuar" : "Quitar"}</button>
+              <button type="button" className="secondary" onClick={reset}>Cancelar</button>
+            </div>
+          </form>
+        )}
+        {step === "idle" && err && <p className="note bad" role="alert">{err}</p>}
       </div>
     </section>
   );

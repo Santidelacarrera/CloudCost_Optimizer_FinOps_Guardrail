@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, authApi } from "@/lib/api";
 import { safeNext } from "@/lib/nav";
+import { getPasskey, passkeyErrorMessage, passkeysSupported } from "@/lib/webauthn";
 
 export default function Mfa() {
   const [mode, setMode] = useState<"app" | "recovery">("app");
@@ -11,6 +12,32 @@ export default function Mfa() {
   const [busy, setBusy] = useState(false);
   const [dead, setDead] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+  // Llaves de acceso de la cuenta: si hay, se ofrecen primero (más rápido y a prueba de suplantación). `totp` = también hay app de códigos.
+  const [passkey, setPasskey] = useState<{ options: Record<string, unknown>; totp: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!passkeysSupported()) return;
+    authApi<{ options: Record<string, unknown>; totp: boolean }>("mfa/passkey/options", { method: "POST", body: {} }).then(setPasskey).catch((e: unknown) => {
+      if (e instanceof ApiError && (e.code === "mfa_expired" || e.code === "locked")) { setErr(e.message); setDead(true); }
+    });
+  }, []);
+
+  const usePasskey = async () => {
+    if (!passkey) return;
+    setBusy(true); setErr("");
+    try {
+      const credential = await getPasskey(passkey.options);
+      await authApi("mfa/passkey", { method: "POST", body: { credential } });
+      window.location.href = safeNext();
+    } catch (e: unknown) {
+      if (e instanceof ApiError && (e.code === "mfa_expired" || e.code === "locked")) { setErr(e.message); setDead(true); }
+      else {
+        setErr(passkeyErrorMessage(e));
+        // El reto se consume en cada intento: se pide uno nuevo para poder reintentar.
+        authApi<{ options: Record<string, unknown>; totp: boolean }>("mfa/passkey/options", { method: "POST", body: {} }).then(setPasskey).catch(() => null);
+      }
+    } finally { setBusy(false); }
+  };
 
   const send = async (value: string) => {
     setBusy(true); setErr("");
@@ -46,8 +73,19 @@ export default function Mfa() {
   return (
     <div className="slip">
       <h1>Verificación en dos pasos</h1>
-      <p className="sub">{mode === "app" ? "Escribe el código de 6 dígitos de tu aplicación de autenticación." : "Escribe uno de los códigos de recuperación que guardaste. Cada uno sirve una vez."}</p>
-      <form className="stack" onSubmit={(e) => { e.preventDefault(); if (code) send(code); }}>
+      {passkey && (
+        <div className="stack" style={{ marginBottom: passkey.totp ? 22 : 0 }}>
+          <p className="sub" style={{ marginBottom: 8 }}>Usa tu llave de acceso: huella, rostro, PIN o llave de seguridad.</p>
+          <button type="button" className="block" onClick={usePasskey} disabled={busy}>{busy ? "Esperando tu llave…" : "Usar llave de acceso"}</button>
+          {err && !passkey.totp && <p className="note bad" role="alert">{err}</p>}
+          {passkey.totp && <p className="sub" style={{ margin: "4px 0 0", textAlign: "center", fontSize: 14 }}>o con tu aplicación de códigos</p>}
+        </div>
+      )}
+      {(!passkey || passkey.totp) && <p className="sub">{mode === "app" ? "Escribe el código de 6 dígitos de tu aplicación de autenticación." : "Escribe uno de los códigos de recuperación que guardaste. Cada uno sirve una vez."}</p>}
+      {passkey && !passkey.totp && (
+        <div className="auth-links"><button type="button" className="linklike" onClick={cancel}>Cancelar</button></div>
+      )}
+      {(!passkey || passkey.totp) && <form className="stack" onSubmit={(e) => { e.preventDefault(); if (code) send(code); }}>
         <div className="field">
           <label htmlFor="code" className={mode === "app" ? "sr-only" : undefined}>{mode === "app" ? "Código de 6 dígitos" : "Código de recuperación"}</label>
           {mode === "app"
@@ -62,7 +100,7 @@ export default function Mfa() {
           </button>
           <button type="button" className="linklike" onClick={cancel}>Cancelar</button>
         </div>
-      </form>
+      </form>}
     </div>
   );
 }
