@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, download, usd } from "@/lib/api";
-import type { Summary } from "@/lib/types";
+import type { SavingsProjection, Summary } from "@/lib/types";
+import SavingsChart from "@/components/SavingsChart";
 import Badge from "@/components/Badge";
 import PageHead from "@/components/PageHead";
 
@@ -12,6 +13,7 @@ const REPO = "33333333-3333-3333-3333-333333333333";
 
 export default function Dashboard() {
   const [s, setS] = useState<Summary | null>(null);
+  const [proj, setProj] = useState<SavingsProjection | null>(null);
   const [scans, setScans] = useState<Scan[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -21,6 +23,7 @@ export default function Dashboard() {
     try {
       setS(await api<Summary>("dashboard/summary"));
       setScans(await api<Scan[]>("scans?limit=5"));
+      setProj(await api<SavingsProjection>("dashboard/savings-projection"));
     } catch (e: any) { setErr(e.message); }
   };
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
@@ -55,6 +58,19 @@ export default function Dashboard() {
             <div className="total"><div className={`v ${s.high_risk ? "err" : ""}`}>{s.high_risk}</div><div className="l">Con riesgo alto</div></div>
             <div className="total"><div className="v">{usd(s.realized_savings)}</div><div className="l">Ahorro verificado{s.realization_pct != null ? ` (${s.realization_pct}% de lo esperado)` : ""}</div></div>
           </div>
+          {proj && (
+            <>
+              <h2>Gasto actual frente a gasto optimizado</h2>
+              <div className="card">
+                <p className="muted" style={{ marginTop: 0 }}>
+                  Si se aplican las recomendaciones abiertas, el gasto mensual bajaría de <strong>{usd(proj.baseline_monthly)}</strong> a{" "}
+                  <strong>{usd(Math.max(proj.baseline_monthly - proj.potential_monthly, 0))}</strong>; ahorro acumulado en {proj.months_ahead} meses de hasta{" "}
+                  <strong>{usd(proj.cumulative_savings.optimized)}</strong> (esperado: {usd(proj.cumulative_savings.expected)}).
+                </p>
+                <SavingsChart data={proj} />
+              </div>
+            </>
+          )}
           <h2>Mayores oportunidades abiertas</h2>
           <div className="card">
             <table>

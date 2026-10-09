@@ -23,3 +23,9 @@ export type AuditEvent = {
   seq: number; event_type: string; actor_type: string; actor_id: string | null; entity_type: string | null;
   entity_id: string | null; payload: Record<string, unknown>; hash: string; created_at: string;
 };
+
+export type ProjectionPoint = { month: string; actual: number | null; current: number | null; optimized: number | null; expected: number | null };
+export type SavingsProjection = {
+  currency: string; as_of: string; baseline_monthly: number; potential_monthly: number; expected_monthly: number; months_ahead: number;
+  cumulative_savings: { optimized: number; expected: number }; history_months_with_data: number; points: ProjectionPoint[]; assumptions: string[];
+};

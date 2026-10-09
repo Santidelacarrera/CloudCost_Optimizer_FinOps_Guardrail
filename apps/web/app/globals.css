@@ -319,3 +319,27 @@ ol.timeline li::before { content: ""; position: absolute; left: -6px; top: 14px;
 .legal p, .legal li { max-width: 68ch; line-height: 1.65; }
 .legal ul { padding-left: 20px; }
 .legal .muted { color: var(--ink-3); margin-top: 0; }
+
+/* ---- gráfico de ahorro proyectado (components/SavingsChart.tsx) */
+.chart { margin: 0; }
+.chart svg { width: 100%; height: auto; display: block; }
+.chart .grid { stroke: var(--rule); stroke-width: 1; }
+.chart .axis { fill: var(--ink-3); font: 12px var(--f-body); }
+.chart .now { stroke: var(--rule-strong); stroke-width: 1; stroke-dasharray: 2 4; }
+.chart .gap { fill: var(--green-wash); opacity: .9; }
+.chart path { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.chart .gap { stroke: none; }
+.chart .l-actual { stroke: var(--ink); stroke-width: 2.5; }
+.chart .l-current { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 7 5; }
+.chart .l-optimized { stroke: var(--green); stroke-width: 3; }
+.chart .l-expected { stroke: var(--green); stroke-width: 2; stroke-dasharray: 2 5; }
+.chart .dot-opt { fill: var(--green); stroke: var(--sheet); stroke-width: 2; }
+.chart .dot-act { fill: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; list-style: none; margin: 10px 0 0; padding: 0; font-size: 13.5px; color: var(--ink-2); }
+.legend li { display: flex; align-items: center; gap: 8px; }
+.legend i { display: inline-block; width: 26px; height: 0; border-top: 3px solid var(--ink); }
+.legend .k-optimized { border-top-color: var(--green); }
+.legend .k-expected { border-top: 3px dotted var(--green); }
+.chart details { margin-top: 14px; }
+.chart summary { cursor: pointer; color: var(--pen-dark); font-weight: 600; }
+.chart .assumptions { margin: 12px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; }
