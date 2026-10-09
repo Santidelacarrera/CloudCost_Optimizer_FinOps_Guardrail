@@ -10,6 +10,14 @@ from ..git.local import LocalDemoProvider
 from ..secrets import SecretError, SecretResolver
 
 
+def _token(repo: dict[str, Any], secrets: SecretResolver) -> str | None:
+    """Token de la referencia del repositorio, confinada al espacio de nombres de su organización."""
+    try:
+        return secrets.resolve(repo.get("token_ref"), repo.get("organization_id"))
+    except SecretError as exc:
+        raise GitProviderError(f"Referencia de token inválida: {exc}") from exc
+
+
 def get_git_provider(repo: dict[str, Any], settings: Settings, secrets: SecretResolver) -> GitProvider:
     provider = repo["provider"]
     if provider == "local":
@@ -17,14 +25,9 @@ def get_git_provider(repo: dict[str, Any], settings: Settings, secrets: SecretRe
             raise GitProviderError("El proveedor 'local' solo está disponible en modo demo")
         return LocalDemoProvider(settings.demo_iac_dir, settings.demo_pr_dir)
     if provider == "github":
-        try:
-            token = secrets.resolve(repo.get("token_ref"), repo.get("organization_id"))
-        except SecretError as exc:
-            raise GitProviderError(f"Referencia de token inválida: {exc}") from exc
-        token = token or (settings.github_token.get_secret_value() if settings.github_token else None)
+        token = _token(repo, secrets) or (settings.github_token.get_secret_value() if settings.github_token else None)
         return GitHubProvider(token or "", settings.github_api_url)
     if provider == "gitlab":
-        token = secrets.resolve(repo.get("token_ref")) or (
-            settings.gitlab_token.get_secret_value() if settings.gitlab_token else None)
+        token = _token(repo, secrets) or (settings.gitlab_token.get_secret_value() if settings.gitlab_token else None)
         return GitLabProvider(token or "", settings.gitlab_api_url)
     raise GitProviderError(f"Proveedor Git '{provider}' no soportado")
