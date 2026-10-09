@@ -30,7 +30,7 @@ con el mismo cálculo de riesgo y las mismas políticas de aprobación.
    ```bash
    curl -X POST $API/api/v1/cloud-accounts -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{
      "provider": "azure", "account_ref": "<SUB>", "display_name": "Azure producción",
-     "tenant_id": "<TENANT>", "client_id": "<APP_ID>", "credentials_ref": "env:AZURE_RO_SECRET"}'
+     "tenant_id": "<TENANT>", "client_id": "<APP_ID>", "credentials_ref": "env:CC_SECRET_AZURE_RO"}'
    ```
    `account_ref` es el id de la suscripción. Sin `regions` se inventarían todas; con `"regions": ["eastus"]` solo esas.
 
@@ -51,7 +51,7 @@ con el mismo cálculo de riesgo y las mismas políticas de aprobación.
 3. **Registra la cuenta**:
    ```bash
    curl -X POST $API/api/v1/cloud-accounts -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{
-     "provider": "gcp", "account_ref": "<ID-DEL-PROYECTO>", "display_name": "GCP datos", "credentials_ref": "env:GCP_RO_KEY"}'
+     "provider": "gcp", "account_ref": "<ID-DEL-PROYECTO>", "display_name": "GCP datos", "credentials_ref": "env:CC_SECRET_GCP_RO"}'
    ```
    `account_ref` es el **id** del proyecto (p. ej. `mi-proyecto-123`), no su número.
 

@@ -40,7 +40,7 @@ def create_account(body: CloudAccountIn, p: Principal = Depends(require(*MANAGE_
         raise HTTPException(422, "El proveedor demo está deshabilitado")
     if body.provider == "aws" and not body.role_arn and settings.env == "production":
         raise HTTPException(422, "En producción se requiere role_arn (rol de solo lectura con ExternalId)")
-    _check_refs(p, body.external_id_ref)
+    _check_refs(p, body.external_id_ref, body.credentials_ref)
     try:
         with tenant_tx(p.org_id) as conn:
             row = conn.execute(

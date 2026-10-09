@@ -172,8 +172,8 @@ class FakeProm:
 
 
 class NoSecrets:
-    def resolve(self, ref):
-        return {"env:PROM_TOKEN": "tok"}.get(ref)
+    def resolve(self, ref, org_id=None):
+        return {"env:CC_SECRET_PROM_TOKEN": "tok"}.get(ref)
 
 
 def k8s_account(**cfg):
@@ -312,9 +312,9 @@ def test_http_client_sends_no_auth_header_without_token_and_only_to_its_host():
 
 def test_account_validation_for_kubernetes():
     ok = dict(provider="kubernetes", account_ref="prod-eks", display_name="Prod EKS", prometheus_url="https://prom.example.com/")
-    acct = CloudAccountIn(**ok, credentials_ref="env:PROM_TOKEN", exclude_namespaces=["kube-system", "monitoring"], cpu_hour_usd=.04)
+    acct = CloudAccountIn(**ok, credentials_ref="env:CC_SECRET_PROM_TOKEN", exclude_namespaces=["kube-system", "monitoring"], cpu_hour_usd=.04)
     assert acct.regions == ["all"] and acct.provider_config == {
-        "prometheus_url": "https://prom.example.com", "credentials_ref": "env:PROM_TOKEN",
+        "prometheus_url": "https://prom.example.com", "credentials_ref": "env:CC_SECRET_PROM_TOKEN",
         "exclude_namespaces": ["kube-system", "monitoring"], "cpu_hour_usd": .04}
     for patch in ({"prometheus_url": None}, {"prometheus_url": "http://prom.example.com"}, {"namespaces": ["Bad NS"]},
                   {"credentials_ref": "token-en-claro"}, {"cpu_hour_usd": -1}):

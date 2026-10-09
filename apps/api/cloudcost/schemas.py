@@ -11,7 +11,9 @@ from .secrets import SecretError, check_ref
 _REF = re.compile(r"^(env|aws-sm):[A-Za-z0-9_./:@+=-]{1,200}$")
 
 
-def _checked_ref(v: str) -> str:
+def _checked_ref(v: str | None) -> str | None:
+    if v is None:
+        return None
     try:
         check_ref(v)
     except SecretError as exc:

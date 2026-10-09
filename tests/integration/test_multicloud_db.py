@@ -54,9 +54,9 @@ def test_azure_and_gcp_accounts_scan_and_persist():
     settings = Settings(demo_enabled=True)
     cases = [
         ("azure", CloudAccountIn(provider="azure", account_ref=str(uuid4()), display_name=f"Azure {suffix}", tenant_id=SUB, client_id=SUB,
-                                 credentials_ref="env:AZ_TEST_SECRET"), AzureCollector, "disk"),
+                                 credentials_ref="env:CC_SECRET_AZ_TEST"), AzureCollector, "disk"),
         ("gcp", CloudAccountIn(provider="gcp", account_ref=f"proj-{suffix}-test", display_name=f"GCP {suffix}",
-                               credentials_ref="env:GCP_TEST_KEY"), GcpCollector, "pd"),
+                               credentials_ref="env:CC_SECRET_GCP_TEST"), GcpCollector, "pd"),
     ]
     for provider, body, collector_cls, service in cases:
         row = create_account(body, admin, settings)
