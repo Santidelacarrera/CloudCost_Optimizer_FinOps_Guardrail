@@ -14,6 +14,8 @@ import os
 import re
 from uuid import UUID
 
+from . import redaction
+
 ENV_PREFIX = "CC_SECRET_"
 SM_PREFIX = "cloudcost/"
 _ENV_NAME = re.compile(r"^CC_SECRET_[A-Z0-9_]{1,100}$")
@@ -49,12 +51,15 @@ class SecretResolver:
             raise SecretError("Referencia de secreto inválida (usa env:CC_SECRET_NOMBRE o aws-sm:cloudcost/<org_id>/nombre)")
         check_ref(ref, org_id)
         if scheme == "env":
-            return os.environ.get(key)
-        if scheme == "aws-sm":
+            value = os.environ.get(key)
+        elif scheme == "aws-sm":
             import boto3  # import perezoso: solo si se usa
 
             try:
-                return boto3.client("secretsmanager").get_secret_value(SecretId=key)["SecretString"]
+                value = boto3.client("secretsmanager").get_secret_value(SecretId=key)["SecretString"]
             except Exception as exc:
-                raise SecretError(f"No se pudo leer el secreto {key}: {type(exc).__name__}") from exc
-        raise SecretError(f"Esquema de secreto no soportado: {scheme}")
+                raise SecretError(f"No se pudo leer el secreto {key}: {type(exc).__name__}") from None
+        else:
+            raise SecretError(f"Esquema de secreto no soportado: {scheme}")
+        redaction.register(value)              # desde ahora cualquier log, error o auditoría que lo contenga lo enmascara
+        return value

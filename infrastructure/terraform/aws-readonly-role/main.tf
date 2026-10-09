@@ -47,8 +47,7 @@ data "aws_iam_policy_document" "read" {
     sid = "ReadInventoryAndMetrics"
     actions = [
       "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:DescribeImages",
-      "ec2:DescribeInstanceTypes", "cloudwatch:GetMetricData", "cloudwatch:ListMetrics",
-      "cloudtrail:LookupEvents", "backup:ListProtectedResources", "dlm:GetLifecyclePolicies", "dlm:GetLifecyclePolicy",
+      "cloudwatch:GetMetricData", "cloudwatch:ListMetrics", "cloudtrail:LookupEvents",
     ]
     resources = ["*"]
   }

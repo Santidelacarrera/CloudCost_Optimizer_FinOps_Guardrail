@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     aws_cost_tag_key: str | None = None               # etiqueta de asignación de costos para el historial mensual (p. ej. "Name" o "app")
     aws_cost_history_months: int = Field(6, ge=1, le=12)
     aws_cost_metric: Literal["UnblendedCost", "AmortizedCost", "NetUnblendedCost", "NetAmortizedCost"] = "UnblendedCost"
+    aws_ce_request_budget: int = Field(60, ge=1, le=500)   # máximo de solicitudes a Cost Explorer por escaneo (cada una cuesta USD 0,01)
 
     # --- observabilidad
     otel_exporter_otlp_endpoint: str | None = None

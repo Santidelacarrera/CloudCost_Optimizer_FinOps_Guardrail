@@ -6,7 +6,7 @@ from typing import Any
 
 from psycopg import Connection
 
-from ..services.dashboard import _OPEN, summary
+from ..services.dashboard import _OPEN, breakdown, summary
 
 RULE_LABELS = {
     "ec2_downsize": "Instancias sobredimensionadas",
@@ -17,8 +17,14 @@ RULE_LABELS = {
 STATUS_LABELS = {
     "PENDING_APPROVAL": "Pendiente de aprobación", "APPROVED": "Aprobada", "PR_CREATED": "PR creado",
     "MERGED": "PR fusionado", "DEPLOYED": "Desplegada", "VERIFIED": "Ahorro verificado", "REJECTED": "Rechazada",
-    "DETECTED": "Detectada", "ANALYZED": "Analizada", "PROPOSED": "Propuesta",
+    "DETECTED": "Detectada", "ANALYZED": "Analizada", "PROPOSED": "Propuesta", "EXPIRED": "Caducada",
 }
+ATTRIBUTION_LABELS = {
+    "confirmed": "Coherente con el cambio", "partial": "Menor de lo esperado", "exceeds_model": "Mayor de lo que explica el cambio",
+    "not_applied": "El cambio no parece aplicado", "confounded": "No atribuible solo al cambio", "inconclusive": "No concluyente",
+    "unverified": "Declarado, no medido",
+}
+GRADE_LABELS = {"high": "Alta", "medium": "Media", "low": "Baja"}
 RISK_LABELS = {"LOW": "Bajo", "MEDIUM": "Medio", "HIGH": "Alto"}
 ITEM_LIMIT = 1000
 
@@ -48,8 +54,9 @@ def build(conn: Connection, org_id: Any, *, now: datetime | None = None) -> dict
           from recommendations r join resources res on res.id = r.resource_pk
          where r.status in {_OPEN} order by r.estimated_monthly_savings desc, r.created_at limit {ITEM_LIMIT + 1}""").fetchall()
     verified = conn.execute("""
-        select r.title, sv.expected_monthly_savings, sv.observed_monthly_savings, sv.realization_pct, sv.method,
-               sv.window_start, sv.window_end, sv.created_at
+        select r.title, sv.expected_monthly_savings, sv.observed_monthly_savings, sv.raw_observed_monthly_savings, sv.realization_pct,
+               sv.method, sv.window_start, sv.window_end, sv.created_at, sv.data_grade, sv.attribution, sv.confidence_grade,
+               sv.confounders, sv.estimated_monthly_savings
           from savings_verifications sv join recommendations r on r.id = sv.recommendation_id
          order by sv.created_at desc limit 200""").fetchall()
     truncated = len(items) > ITEM_LIMIT
@@ -70,8 +77,14 @@ def build(conn: Connection, org_id: Any, *, now: datetime | None = None) -> dict
                    "projected_monthly_cost": float(i["projected_monthly_cost"]),
                    "estimated_monthly_savings": float(i["estimated_monthly_savings"])} for i in items[:ITEM_LIMIT]],
         "items_truncated": truncated,
+        "breakdown": breakdown(conn),
         "verified": [{**v, "expected_monthly_savings": float(v["expected_monthly_savings"]),
                       "observed_monthly_savings": float(v["observed_monthly_savings"]),
+                      "raw_observed_monthly_savings": float(v["raw_observed_monthly_savings"]) if v["raw_observed_monthly_savings"] is not None else None,
+                      "estimated_monthly_savings": float(v["estimated_monthly_savings"]) if v["estimated_monthly_savings"] is not None else None,
+                      "attribution_label": ATTRIBUTION_LABELS.get(v["attribution"], v["attribution"]),
+                      "grade_label": GRADE_LABELS.get(v["confidence_grade"], v["confidence_grade"]),
+                      "confounders": [c["code"] for c in (v["confounders"] or [])],
                       "realization_pct": float(v["realization_pct"]) if v["realization_pct"] is not None else None}
                      for v in verified],
     }

@@ -21,6 +21,15 @@ Qué se construyó, en qué PR, dónde se documenta y **qué no se ha podido ver
 | 13 | Passkeys / WebAuthn | #21 | [passkeys](passkeys.md) | autenticador de software y virtual de Chromium; **sin llaves físicas ni Safari/Firefox** |
 | 14 | Paquete de pentest externo + corrección de referencias de secreto | #22 | [pentest/](pentest/scope.md) | pruebas automáticas de aislamiento y rutas; **el pentest humano no se ha realizado** |
 
+## Revisión de calidad: integración real, recomendaciones, aislamiento y ahorro medido
+| Área | Qué se hizo | Verificado con | Pendiente |
+|---|---|---|---|
+| Integración AWS | Coste de la cuenta por servicio/región/período normalizado, errores clasificados, reintentos con espera exponencial, presupuesto de Cost Explorer, paginación todo-o-nada, calidad de la serie diaria, comprobación de identidad, guardia de solo lectura en código, permisos IAM reducidos a lo usado | Clientes `botocore.Stubber` (validan parámetros y respuestas contra el modelo real de la API) | **Ejecutar `aws-lab` contra una cuenta real** ([guía](aws-lab-validation.md)); inventario de RDS |
+| Fuente adicional | Evaluada: no se integra ([ADR-0003](adr/0003-external-recommendation-sources.md)) | Solo se comprobó que el SDK expone los servicios; requisitos de plan sin verificar | Reabrir con datos de una cuenta real |
+| Calidad de recomendaciones | Fórmulas versionadas, evidencia append-only con huella en la auditoría, estimado/aprobado/observado separados, identidad estable, sustitución, caducidad y bloqueo por cambios en curso | Pruebas unitarias y de integración con PostgreSQL real | — |
+| Seguridad | Aislamiento por API en ambos sentidos; PR sin ejecución; matriz Rego (**corrige un hueco: RDS y Azure/GCP no estaban protegidos**); redacción de secretos; auditoría v2 (**corrige una ambigüedad de canonicalización**) y anclaje de la cabeza | `opa` real, concurrencia real, manipulación como propietario de la base | Anclaje externo automático de la cabeza; pentest humano |
+| Ahorro observado | Línea base al aprobar y al desplegar, ventanas alineadas, control de uso y del resto del servicio, grados de confianza, informe de demostración | Pruebas puras e integración; el informe usa datos **sintéticos** | Medir un cambio real tras desplegarlo |
+
 ## Orden de fusión sugerido
 1. Independientes entre sí: #9, #10, #11, #12, #13, #14, #15, #16, #22.
 2. Apiladas: **#17 → #18 → #19** (cada una apunta a la anterior; al fusionar la base, GitHub reorienta la siguiente a `main`).

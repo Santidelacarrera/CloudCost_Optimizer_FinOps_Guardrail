@@ -5,6 +5,8 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from .. import redaction
+
 # Archivos que se leen del repositorio: Terraform y los values/Chart de Helm (no todo el YAML: un repo de manifiestos tiene miles).
 _IAC_FILE = re.compile(r"(\.tf$)|((^|/)(values[^/]*|Chart)\.ya?ml$)")
 
@@ -15,6 +17,7 @@ def is_iac_file(path: str) -> bool:
 
 class GitProviderError(Exception):
     def __init__(self, message: str, status: int | None = None):
+        message = redaction.redact_text(message)           # un servidor remoto puede repetir en su error el token que le enviamos
         super().__init__(message)
         self.message, self.status = message, status
 

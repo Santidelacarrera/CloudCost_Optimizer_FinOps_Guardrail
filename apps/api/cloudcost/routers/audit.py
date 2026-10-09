@@ -28,7 +28,21 @@ def list_events(
 
 
 @router.get("/audit/verify")
-def verify_chain(p: Principal = Depends(require(*READ_AUDIT))):
-    """Recorre la cadena de hashes de la organización y devuelve el primer eslabón alterado, si existe."""
+def verify_chain(
+    pin_seq: int | None = Query(None, ge=1, description="Evento anotado en una verificación anterior (o en una copia externa)"),
+    pin_hash: str | None = Query(None, pattern=r"^[0-9a-f]{64}$", description="Hash que tenía ese evento"),
+    p: Principal = Depends(require(*READ_AUDIT)),
+):
+    """Recorre la cadena de hashes de la organización y devuelve el primer eslabón alterado, si existe.
+
+    Una cadena de hashes por sí sola NO detecta que se hayan borrado los últimos eventos ni que alguien con acceso de propietario a la base
+    la haya reescrito entera. Por eso la respuesta incluye la cabeza (`head_seq`, `head_hash`): guárdala fuera de la base (los respaldos y
+    el monitor externo lo hacen) y pásala después como `pin_seq`/`pin_hash`: `anchored=false` indica que ese evento ya no existe o cambió.
+    """
     with tenant_tx(p.org_id) as conn:
-        return conn.execute("select ok, checked, first_bad_seq from verify_audit_chain()").fetchone()
+        chain = conn.execute("select ok, checked, first_bad_seq from verify_audit_chain()").fetchone()
+        head = conn.execute("select seq, hash from audit_events order by seq desc limit 1").fetchone()
+        anchored = None
+        if pin_seq is not None and pin_hash is not None:
+            anchored = conn.execute("select 1 from audit_events where seq = %s and hash = %s", (pin_seq, pin_hash)).fetchone() is not None
+    return {**chain, "head_seq": head["seq"] if head else None, "head_hash": head["hash"] if head else None, "anchored": anchored}

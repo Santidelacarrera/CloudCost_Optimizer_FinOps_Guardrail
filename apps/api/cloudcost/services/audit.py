@@ -8,6 +8,8 @@ from uuid import UUID
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
+from .. import redaction
+
 # Eventos del ciclo de vida (nombres de la especificación + eventos operativos)
 DETECTION = "DETECTION"
 RECOMMENDATION_CREATED = "RECOMMENDATION_CREATED"
@@ -19,6 +21,10 @@ PR_CLOSED = "PR_CLOSED"
 DEPLOYMENT = "DEPLOYMENT"
 POLICY_EVALUATED = "POLICY_EVALUATED"
 SAVINGS_VERIFIED = "SAVINGS_VERIFIED"
+EVIDENCE_UPDATED = "EVIDENCE_UPDATED"
+RECOMMENDATION_EXPIRED = "RECOMMENDATION_EXPIRED"
+RECOMMENDATION_STALE = "RECOMMENDATION_STALE"
+BASELINE_CAPTURED = "BASELINE_CAPTURED"
 SCAN_REQUESTED = "SCAN_REQUESTED"
 IMPORT_UPLOADED = "IMPORT_UPLOADED"
 EXPENSES_ANALYZED = "EXPENSES_ANALYZED"
@@ -66,5 +72,5 @@ def record(conn: Connection, org_id: UUID | str, event_type: str, *, actor: Acto
         """insert into audit_events (organization_id, event_type, actor_type, actor_id, entity_type, entity_id, payload)
            values (%s, %s, %s, %s, %s, %s, %s)""",
         (str(org_id), event_type, actor.type, actor.id, entity_type, str(entity_id) if entity_id else None,
-         Jsonb(payload or {})),
+         Jsonb(redaction.redact_obj(payload or {}))),
     )

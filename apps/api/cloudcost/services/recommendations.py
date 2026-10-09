@@ -1,6 +1,7 @@
 """Persistencia de recomendaciones y transiciones de estado."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -12,6 +13,7 @@ from ..domain import state_machine as sm
 from ..domain.policy import PolicyDecision
 from ..domain.rules import Finding
 from . import audit
+from . import evidence as evidence_store
 from .audit import Actor
 
 
@@ -51,7 +53,16 @@ def transition(conn: Connection, org_id, rec_id, current: str, target: str, acto
 class Upserted:
     rec_id: UUID | None
     created: bool
+    version: int | None = None
+    evidence_hash: str | None = None
+    evidence_new: bool = False
 
+
+# La versión (que invalida las aprobaciones ya dadas) sube solo ante un cambio MATERIAL: de riesgo, de aprobadores exigidos, de los
+# parámetros de la acción o del ahorro en ≥ max(1 USD, 5 %) respecto a lo que veía el aprobador. Con costes reales el ahorro oscila
+# unos céntimos en cada escaneo; subir la versión por eso anularía aprobaciones a medias sin que nada importante hubiera cambiado.
+VERSION_SAVINGS_TOLERANCE = 0.05
+VERSION_SAVINGS_MIN_USD = 1.0
 
 _UPSERT = """
 insert into recommendations (
@@ -73,14 +84,23 @@ on conflict (organization_id, dedupe_key) do update set
     risk = excluded.risk, impact = excluded.impact, priority = excluded.priority,
     destructive = excluded.destructive, automation_blocked = excluded.automation_blocked,
     approvals_required = excluded.approvals_required, policy = excluded.policy, evidence = excluded.evidence,
-    llm_advice = excluded.llm_advice,
-    version = case when (recommendations.estimated_monthly_savings, recommendations.risk, recommendations.approvals_required)
-                        is distinct from (excluded.estimated_monthly_savings, excluded.risk, excluded.approvals_required)
-                   then recommendations.version + 1 else recommendations.version end,
+    params = excluded.params, llm_advice = excluded.llm_advice,
+    status = case when recommendations.status = 'PROPOSED' and excluded.status = 'PENDING_APPROVAL'
+                  then 'PENDING_APPROVAL' else recommendations.status end,
+    version = recommendations.version + %(bump)s,
+    stale_since = null, stale_reason = null,
     updated_at = now()
 where recommendations.status in ('PROPOSED', 'PENDING_APPROVAL')
-returning id, (xmax = 0) as created
+returning id, version, status, (xmax = 0) as created
 """
+
+
+def _material_change(prev: dict[str, Any], *, risk: str, approvals: int, params: dict, savings: float, basis_savings: float) -> bool:
+    if prev["risk"] != risk or int(prev["approvals_required"]) != approvals:
+        return True
+    if (prev["params"] or {}) != json.loads(json.dumps(params, default=str)):
+        return True
+    return abs(basis_savings - savings) >= max(VERSION_SAVINGS_MIN_USD, VERSION_SAVINGS_TOLERANCE * max(basis_savings, savings))
 
 
 def upsert_finding(conn: Connection, org_id, *, scan_id, account_id, repo_id, resource_pk, finding: Finding, risk: str,
@@ -88,6 +108,15 @@ def upsert_finding(conn: Connection, org_id, *, scan_id, account_id, repo_id, re
                    alternatives: list[dict[str, Any]], evidence: dict[str, Any], llm_advice: dict[str, Any] | None,
                    dedupe_key: str, actor: Actor = audit.SYSTEM) -> Upserted:
     status = sm.PENDING_APPROVAL if decision.allowed else sm.PROPOSED
+    prev = conn.execute("select * from recommendations where organization_id = %s and dedupe_key = %s for update",
+                        (str(org_id), dedupe_key)).fetchone()
+    bump = 0
+    if prev is not None and prev["status"] in (sm.PROPOSED, sm.PENDING_APPROVAL):
+        basis = evidence_store.latest(conn, prev["id"])
+        basis_savings = float(basis["estimated_monthly_savings"]) if basis and basis["recommendation_version"] == prev["version"] \
+            else float(prev["estimated_monthly_savings"])
+        bump = int(_material_change(prev, risk=risk, approvals=decision.approvals_required, params=finding.params,
+                                    savings=finding.estimated_monthly_savings, basis_savings=basis_savings))
     row = conn.execute(_UPSERT, {
         "org": str(org_id), "scan_id": str(scan_id), "account_id": str(account_id),
         "repo_id": str(repo_id) if repo_id else None, "resource_pk": str(resource_pk), "rule_id": finding.rule_id,
@@ -98,11 +127,14 @@ def upsert_finding(conn: Connection, org_id, *, scan_id, account_id, repo_id, re
         "destructive": finding.destructive, "blocked": decision.automation_blocked,
         "approvals": decision.approvals_required, "policy": Jsonb(decision.to_dict()), "evidence": Jsonb(evidence),
         "params": Jsonb(finding.params), "llm_advice": Jsonb(llm_advice) if llm_advice else None,
-        "dedupe_key": dedupe_key}).fetchone()
+        "dedupe_key": dedupe_key, "bump": bump}).fetchone()
     if row is None:                       # existe en un estado posterior (aprobada, rechazada, PR...): no se toca
         return Upserted(None, False)
+    rec_id = row["id"]
+    snap = evidence_store.record(conn, org_id, rec_id=rec_id, version=row["version"], scan_id=scan_id, rule_id=finding.rule_id,
+                                 params=finding.params, estimated=finding.estimated_monthly_savings,
+                                 reference_cost=finding.current_monthly_cost, confidence=finding.confidence, evidence=evidence)
     if row["created"]:
-        rec_id = row["id"]
         log_transition(conn, org_id, rec_id, None, sm.DETECTED, actor, "Detectada por regla " + finding.rule_id)
         log_transition(conn, org_id, rec_id, sm.DETECTED, sm.ANALYZED, actor, "Evidencia y riesgo calculados")
         log_transition(conn, org_id, rec_id, sm.ANALYZED, sm.PROPOSED, actor, "Política evaluada")
@@ -113,9 +145,16 @@ def upsert_finding(conn: Connection, org_id, *, scan_id, account_id, repo_id, re
         audit.record(conn, org_id, audit.RECOMMENDATION_CREATED, actor=actor, entity_type="recommendation", entity_id=rec_id,
                      payload={"action": finding.action, "risk": risk, "confidence": finding.confidence,
                               "estimated_monthly_savings": finding.estimated_monthly_savings, "status": status,
-                              "approvals_required": decision.approvals_required})
-        return Upserted(rec_id, True)
-    return Upserted(row["id"], False)
+                              "approvals_required": decision.approvals_required, "evidence_hash": snap.hash,
+                              "formula_id": (evidence.get("estimate") or {}).get("formula_id")})
+        return Upserted(rec_id, True, row["version"], snap.hash, snap.created)
+    if prev is not None and prev["status"] == sm.PROPOSED and row["status"] == sm.PENDING_APPROVAL:
+        log_transition(conn, org_id, rec_id, sm.PROPOSED, sm.PENDING_APPROVAL, actor, "La política ya permite proponerla")
+    if snap.created:
+        audit.record(conn, org_id, audit.EVIDENCE_UPDATED, actor=actor, entity_type="recommendation", entity_id=rec_id,
+                     payload={"version": row["version"], "evidence_hash": snap.hash,
+                              "estimated_monthly_savings": finding.estimated_monthly_savings, "version_bumped": bool(bump)})
+    return Upserted(rec_id, False, row["version"], snap.hash, snap.created)
 
 
 # ------------------------------------------------------------------ consultas
@@ -165,4 +204,26 @@ def get_detail(conn: Connection, rec_id) -> dict[str, Any]:
         (str(rec_id),)).fetchone()
     rec["savings_verification"] = conn.execute(
         "select * from savings_verifications where recommendation_id = %s", (str(rec_id),)).fetchone()
+    sv = rec["savings_verification"]
+    # Tres cifras distintas, nunca mezcladas: la proyección vigente, lo que se aprobó (congelado) y lo que se midió después.
+    rec["savings_figures"] = {
+        "estimated_monthly": rec["estimated_monthly_savings"],
+        "approved_monthly": rec["approved_monthly_savings"], "approved_at": rec["approved_at"],
+        "observed_monthly": sv["observed_monthly_savings"] if sv else None,
+        "observed_attribution": sv["attribution"] if sv else None, "observed_data_grade": sv["data_grade"] if sv else None,
+        "observed_confidence": sv["confidence_grade"] if sv else None}
+    rec["evidence_history"] = evidence_store.history(conn, rec_id)
+    rec["baselines"] = conn.execute(
+        """select id, phase, window_start, window_end, days_with_data, days_expected, monthly_cost, cost_source, data_grade, baseline_hash, created_at
+             from savings_baselines where recommendation_id = %s order by created_at""", (str(rec_id),)).fetchall()
     return rec
+
+
+def get_evidence(conn: Connection, rec_id) -> dict[str, Any]:
+    """Todas las versiones de la evidencia con su comprobación de integridad (huella recalculada = huella guardada)."""
+    rec = conn.execute("select id, version, evidence_hash, approved_evidence_id, status from recommendations where id = %s", (str(rec_id),)).fetchone()
+    if rec is None:
+        raise WorkflowError(404, "Recomendación no encontrada", "not_found")
+    versions = evidence_store.history(conn, rec_id, with_evidence=True)
+    return {"recommendation_id": rec["id"], "version": rec["version"], "current_hash": rec["evidence_hash"],
+            "approved_evidence_id": rec["approved_evidence_id"], "all_intact": all(v["integrity_ok"] for v in versions), "versions": versions}

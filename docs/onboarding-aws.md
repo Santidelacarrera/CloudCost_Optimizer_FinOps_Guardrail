@@ -9,12 +9,12 @@ exactamente las mismas acciones y que ninguna es de escritura.
 
 | Acciones | Para qué |
 |---|---|
-| `ec2:DescribeInstances/Volumes/Snapshots/Images/InstanceTypes` | Inventario |
+| `ec2:DescribeInstances/Volumes/Snapshots/Images` | Inventario |
 | `cloudwatch:GetMetricData/ListMetrics` | Utilización |
-| `cloudtrail:LookupEvents`, `backup:ListProtectedResources`, `dlm:GetLifecyclePolicies/GetLifecyclePolicy` | Contexto de borrado seguro |
-| `ce:GetCostAndUsage`, `ce:GetCostAndUsageWithResources` (opcional, `EnableCostExplorer`) | Costo real por recurso |
+| `cloudtrail:LookupEvents` | Cuánto tiempo lleva un volumen sin adjuntar |
+| `ce:GetCostAndUsage`, `ce:GetCostAndUsageWithResources` (opcional, `EnableCostExplorer`) | Costo real por recurso y costo de la cuenta por servicio/región (cada solicitud cuesta USD 0,01) |
 
-Nada de escritura, nada de `*` en las acciones. La confianza solo admite **un** principal concreto y exige el ExternalId.
+Nada de escritura, nada de `*` en las acciones. Se retiraron `backup:*`, `dlm:*` y `ec2:DescribeInstanceTypes`: el código no los usaba (roles ya desplegados con ellos siguen funcionando). Además, el colector rechaza en código cualquier operación fuera de esa lista. La confianza solo admite **un** principal concreto y exige el ExternalId.
 
 ## Flujo para el cliente
 
@@ -51,4 +51,4 @@ Sin esas variables el endpoint responde `503` con el motivo, y el cliente puede 
 
 - Local: parseo de la plantilla, paridad con Terraform y forma del enlace (`pytest tests/unit/test_cloudformation.py`).
 - CI: `cfn-lint` oficial sobre la plantilla (job `cloudformation`).
-- **No verificado aquí:** el despliegue real de la pila en una cuenta AWS. Pruébalo una vez en una cuenta de prueba antes de ofrecerlo a clientes.
+- **No verificado aquí:** el despliegue real de la pila en una cuenta AWS. Pruébalo con la guía [aws-lab-validation.md](aws-lab-validation.md) antes de ofrecerlo a clientes.

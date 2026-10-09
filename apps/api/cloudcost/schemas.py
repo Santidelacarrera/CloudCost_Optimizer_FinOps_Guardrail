@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any, Literal
 from uuid import UUID
 
@@ -33,6 +34,7 @@ class DecisionIn(BaseModel):
 
 class DeployIn(BaseModel):
     reference: str | None = Field(default=None, max_length=300, description="URL del pipeline/commit de despliegue")
+    deployed_on: date | None = Field(default=None, description="Día real del despliegue (por defecto hoy). Fija el fin de la ventana de coste previa.")
 
 
 class VerifyIn(BaseModel):
