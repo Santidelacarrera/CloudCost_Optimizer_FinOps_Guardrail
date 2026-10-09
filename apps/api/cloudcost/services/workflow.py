@@ -174,14 +174,15 @@ def verify_github_signature(secret: str, body: bytes, signature_header: str | No
     return hmac.compare_digest(expected, signature_header)
 
 
-def handle_pull_request_event(conn: Connection, org_id, payload: dict[str, Any]) -> dict[str, Any]:
+def handle_pull_request_event(conn: Connection, org_id, payload: dict[str, Any], *, provider: str = "github") -> dict[str, Any]:
     if payload.get("action") != "closed":
         return {"handled": False, "reason": "ignored_action"}
     pr = payload.get("pull_request") or {}
     full_name = (payload.get("repository") or {}).get("full_name")
     row = conn.execute(
         """select p.id, p.recommendation_id from pull_requests p join repositories r on r.id = p.repository_id
-            where r.full_name = %s and p.number = %s""", (full_name, pr.get("number"))).fetchone()
+            where r.full_name = %s and r.provider = %s and p.number = %s""",
+        (full_name, provider, pr.get("number"))).fetchone()
     if not row:
         return {"handled": False, "reason": "unknown_pull_request"}
     rec_id = row["recommendation_id"]

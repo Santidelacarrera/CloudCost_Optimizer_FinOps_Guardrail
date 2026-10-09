@@ -18,6 +18,12 @@ Memoria: requiere CloudWatch Agent (`CWAgent`); sin ella las reglas de downsize 
 1. Token fine-grained con permisos *Contents: write* y *Pull requests: write* solo en el repo de IaC (sin permiso de merge).
 2. Registra el repo (`POST /api/v1/repositories`, `token_ref: env:GITHUB_TOKEN`).
 3. Webhook (evento *Pull requests*): `https://<api>/api/v1/webhooks/github/<org_id>`, secreto = `GITHUB_WEBHOOK_SECRET`.
+
+**GitLab** (gitlab.com o autoalojado): mismo flujo con Merge Requests y el mismo parcheo por offsets; nunca se fusiona automáticamente.
+1. Crea un *project access token* con rol **Developer** y alcance **`api`** (los alcances `read_repository`/`write_repository` no bastan para abrir MR). Guárdalo en `GITLAB_TOKEN` o referéncialo por repositorio.
+2. Registra el proyecto: `POST /api/v1/repositories` con `provider: "gitlab"`, `full_name: "grupo/subgrupo/proyecto"` y `token_ref: env:GITLAB_TOKEN`. Autoalojado: define `GITLAB_API_URL=https://<host>/api/v4` (en producción debe ser https).
+3. Webhook (evento *Merge request events*): `https://<api>/api/v1/webhooks/gitlab/<org_id>`, *Secret token* = `GITLAB_WEBHOOK_SECRET`. GitLab no firma el cuerpo: el secreto viaja en `X-Gitlab-Token` y se compara en tiempo constante; sirve solo sobre HTTPS.
+4. Los borradores se crean con el prefijo `Draft:`. Etiquetas `finops`, `automated` (y `do-not-auto-merge` si la política bloquea la automatización).
 4. Protege `main` con revisión obligatoria y checks (incluye `opa test`/plan guardrail de `packages/policies`).
 
 ## 3. Producción
