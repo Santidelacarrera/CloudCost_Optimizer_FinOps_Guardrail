@@ -62,7 +62,7 @@ Estas son invariantes del sistema, no buenas intenciones; cada una tiene una pru
 
 ```mermaid
 flowchart LR
-  subgraph Detectar y analizar
+  subgraph DA["Detectar y analizar"]
     C[Colectores de solo lectura<br/>AWS · Azure · GCP · Kubernetes · CSV] --> N[Normalización<br/>recursos + métricas + costo real]
     N --> R[Reglas deterministas<br/>→ riesgo → política]
   end
