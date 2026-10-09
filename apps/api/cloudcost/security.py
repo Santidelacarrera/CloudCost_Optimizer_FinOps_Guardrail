@@ -78,7 +78,7 @@ def get_principal(request: Request, settings: Settings = Depends(get_settings)) 
     if scheme.lower() != "bearer" or not token:
         raise HTTPException(401, "Falta el token Bearer", headers={"WWW-Authenticate": "Bearer"})
     if token.startswith(SESSION_PREFIX):                 # sesión de una cuenta propia (token opaco, se valida en la base)
-        if not settings.auth_local_enabled:
+        if not (settings.auth_local_enabled or settings.sso_enabled):      # las sesiones también las emite el SSO
             raise HTTPException(401, "Sesión inválida o expirada", headers={"WWW-Authenticate": "Bearer"})
         return _session_principal(token, settings)
     return decode_token(token, settings)

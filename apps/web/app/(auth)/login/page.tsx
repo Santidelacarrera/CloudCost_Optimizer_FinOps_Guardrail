@@ -7,12 +7,34 @@ import { safeNext } from "@/lib/nav";
 import { getPasskey, passkeyErrorMessage, passkeysSupported } from "@/lib/webauthn";
 import { ROLES, ROLE_LABEL } from "@/lib/roles";
 
-type Cfg = { local_enabled: boolean; signup_open: boolean; dev_login_enabled: boolean; passkeys_enabled?: boolean };
+type Cfg = { local_enabled: boolean; signup_open: boolean; dev_login_enabled: boolean; passkeys_enabled?: boolean; sso_enabled?: boolean; sso_label?: string | null };
+
+// Códigos estables que devuelve el flujo de SSO (/api/auth/sso/callback). Solo se muestran textos de este mapa: nada de lo que llegue
+// por la URL se refleja en pantalla.
+const SSO_ERRORS: Record<string, string> = {
+  access_denied: "Cancelaste el inicio de sesión en tu proveedor de identidad.",
+  invalid_flow: "El inicio de sesión no se completó en este navegador. Inténtalo de nuevo desde aquí.",
+  flow_expired: "El inicio de sesión tardó demasiado. Inténtalo de nuevo.",
+  account_exists: "Ya existe una cuenta con tu correo. Pide a un administrador que la vincule al inicio de sesión único.",
+  account_disabled: "Tu cuenta está deshabilitada. Contacta a un administrador.",
+  not_provisioned: "Tu cuenta aún no fue dada de alta en CloudCost. Pide acceso a un administrador.",
+  domain_not_allowed: "Tu dominio de correo no está autorizado para entrar.",
+  wrong_tenant: "Tu cuenta no pertenece al directorio autorizado.",
+  no_role: "Tu cuenta no tiene ningún grupo o rol autorizado en CloudCost.",
+  groups_overage: "Perteneces a demasiados grupos para leerlos en el token. Pide a un administrador que use roles de aplicación.",
+  mfa_required: "Tu proveedor de identidad debe verificar un segundo factor para entrar.",
+  no_email: "Tu proveedor de identidad no entregó un correo válido.",
+  unavailable: "No pudimos contactar con el proveedor de identidad. Inténtalo en unos minutos.",
+  idp_unreachable: "No pudimos contactar con el proveedor de identidad. Inténtalo en unos minutos.",
+  sso_disabled: "El inicio de sesión único no está activado.",
+};
+const SSO_FALLBACK = "No pudimos completar el inicio de sesión único. Inténtalo de nuevo o contacta a un administrador.";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [ssoErr, setSsoErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [wait, setWait] = useState(0);
   const [unverified, setUnverified] = useState(false);
@@ -25,6 +47,8 @@ export default function Login() {
   useEffect(() => {
     authApi<Cfg>("config").then(setCfg).catch(() => null);
     const q = new URLSearchParams(window.location.search);
+    const ssoError = q.get("sso_error");
+    if (ssoError) setSsoErr(Object.prototype.hasOwnProperty.call(SSO_ERRORS, ssoError) ? SSO_ERRORS[ssoError] : SSO_FALLBACK);
     if (q.get("expired")) setNotice({ kind: "warn", text: "Tu sesión terminó. Entra de nuevo para continuar." });
     else if (q.get("reset")) setNotice({ kind: "ok", text: "Contraseña actualizada. Ya puedes entrar con la nueva." });
     else if (q.get("verified")) setNotice({ kind: "ok", text: "Correo confirmado. Ya puedes entrar." });
@@ -89,6 +113,14 @@ export default function Login() {
       <p className="sub">Revisa tus ahorros pendientes y aprueba los cambios.</p>
       {notice && <p className={`note ${notice.kind}`} role="status" style={{ marginBottom: 18 }}>{notice.text}</p>}
       {devLink && <p className="note info" style={{ marginBottom: 18 }}>Modo desarrollo, sin servidor de correo: <a href={devLink}>abrir el enlace de confirmación</a>.</p>}
+      {ssoErr && <p className="note bad" role="alert" style={{ marginBottom: 18 }}>{ssoErr}</p>}
+      {cfg.sso_enabled && (
+        <div className="stack" style={{ marginBottom: cfg.local_enabled ? 22 : 0 }}>
+          {/* Enlace normal (no <Link>): es un endpoint del servidor que redirige al proveedor; no debe precargarse. */}
+          <a className="btn block" href="/api/auth/sso/start" style={{ textAlign: "center" }}>Entrar con {cfg.sso_label || "SSO"}</a>
+          {cfg.local_enabled && <p className="sub" style={{ margin: "4px 0 0", textAlign: "center", fontSize: 14 }}>o con tu correo y contraseña</p>}
+        </div>
+      )}
       {cfg.local_enabled && (
         <form className="stack" onSubmit={submit} noValidate={false}>
           <div className="field">

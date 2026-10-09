@@ -14,6 +14,10 @@ Qué está resuelto en el repositorio, qué depende de ti y qué conviene hacer 
 - [x] Métricas HTTP y de autenticación, y reglas de alerta (`infrastructure/docker/alerts.yml`).
 - [x] Borradores de Términos y Política de privacidad en `/terms` y `/privacy`.
 - [x] Medición de capacidad de inicio de sesión (docs/deployment.md §7).
+- [x] SSO con OIDC (Entra ID / Okta): código + PKCE, validación del ID token, alta automática, roles desde grupos y reglas anti-*nOAuth*; probado contra un IdP simulado ([sso.md](sso.md)).
+
+## Depende de ti (no puedo hacerlo desde aquí)
+- [ ] Si usas SSO: registrar la aplicación en Entra/Okta y recorrer la lista de comprobación de [sso.md](sso.md) §5 con tu IdP real (solo se probó contra un IdP simulado).
 - [x] Llaves de acceso (WebAuthn): segundo factor y entrada sin contraseña, probadas con un autenticador de software y, en CI, con uno virtual de Chromium ([passkeys.md](passkeys.md)).
 
 ## Depende de ti (no puedo hacerlo desde aquí)

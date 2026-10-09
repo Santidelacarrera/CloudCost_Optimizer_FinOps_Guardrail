@@ -19,6 +19,21 @@ x-api-env: &api-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM: ${SMTP_FROM:-CloudCost <no-reply@localhost>}
+  SSO_ENABLED: ${SSO_ENABLED:-false}                  # OIDC con Entra ID / Okta; ver docs/sso.md
+  SSO_PROVIDER: ${SSO_PROVIDER:-entra}
+  SSO_LABEL: ${SSO_LABEL:-}
+  SSO_ISSUER: ${SSO_ISSUER:-}
+  SSO_TENANT_ID: ${SSO_TENANT_ID:-}
+  SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+  SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+  SSO_ORG_ID: ${SSO_ORG_ID:-}
+  SSO_ALLOWED_DOMAINS: ${SSO_ALLOWED_DOMAINS:-}
+  SSO_ROLE_CLAIM: ${SSO_ROLE_CLAIM:-}
+  SSO_ROLE_MAP: ${SSO_ROLE_MAP:-}
+  SSO_DEFAULT_ROLE: ${SSO_DEFAULT_ROLE:-VIEWER}
+  SSO_JIT: ${SSO_JIT:-true}
+  SSO_LINK_EXISTING: ${SSO_LINK_EXISTING:-false}
+  SSO_REQUIRED_AMR: ${SSO_REQUIRED_AMR:-}
   PASSKEYS_ENABLED: ${PASSKEYS_ENABLED:-true}          # llaves de acceso (WebAuthn); ver docs/passkeys.md
   WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}                 # vacío = host de PUBLIC_WEB_URL (no lo cambies después: invalida las llaves)
   WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-}

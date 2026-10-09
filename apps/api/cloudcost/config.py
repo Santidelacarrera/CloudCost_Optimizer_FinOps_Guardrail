@@ -3,11 +3,20 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import urlparse
+from uuid import UUID
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .auth import pepper
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 class Settings(BaseSettings):
@@ -48,6 +57,24 @@ class Settings(BaseSettings):
     oidc_org_claim: str = "org_id"
     oidc_role_claim: str = "role"
     dev_default_org_id: str = "11111111-1111-1111-1111-111111111111"
+
+    # --- SSO (OpenID Connect con Microsoft Entra ID u Okta; ver docs/sso.md)
+    sso_enabled: bool = False
+    sso_provider: Literal["entra", "okta", "generic"] = "entra"
+    sso_label: str = ""                                  # texto del botón; por defecto el nombre del proveedor
+    sso_issuer: str = ""                                 # Entra: https://login.microsoftonline.com/<TENANT>/v2.0 · Okta: https://<org>.okta.com/oauth2/default
+    sso_client_id: str = ""
+    sso_client_secret: SecretStr = SecretStr("")
+    sso_scopes: str = "openid email profile"
+    sso_tenant_id: str = ""                              # solo Entra: GUID del directorio (se comprueba el claim `tid`)
+    sso_org_id: str = ""                                 # organización de CloudCost a la que entra el personal de este IdP
+    sso_allowed_domains: str = ""                        # lista separada por comas; vacío = cualquier dominio del IdP
+    sso_role_claim: str = ""                             # por defecto: `roles` (Entra) o `groups` (Okta)
+    sso_role_map: str = ""                               # «grupo-u-rol:ROL,otro:ADMIN»
+    sso_default_role: str = "VIEWER"                     # rol sin coincidencia; vacío = rechazar el acceso
+    sso_jit: bool = True                                 # crear la cuenta en el primer acceso
+    sso_link_existing: bool = False                      # permitir que una cuenta local con el mismo correo pase a SSO (correo verificado por el IdP)
+    sso_required_amr: str = ""                           # p. ej. «mfa» para exigir segundo factor verificado por el IdP
 
     # --- Git
     github_api_url: str = "https://api.github.com"
@@ -100,6 +127,25 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    def _check_sso(self) -> None:
+        from .auth import oidc  # import tardío: config no depende del resto del paquete
+
+        problems = oidc.validate_issuer(self.sso_provider, self.sso_issuer, self.sso_tenant_id or None)
+        if not self.sso_client_id or not self.sso_client_secret.get_secret_value():
+            problems.append("SSO_CLIENT_ID y SSO_CLIENT_SECRET son obligatorios con SSO_ENABLED=true")
+        if not _is_uuid(self.sso_org_id):
+            problems.append("SSO_ORG_ID debe ser el UUID de la organización a la que entra el personal")
+        try:
+            oidc.parse_role_map(self.sso_role_map)
+        except ValueError as exc:
+            problems.append(str(exc))
+        if self.sso_default_role and self.sso_default_role.upper() not in oidc.ROLE_PRIORITY:
+            problems.append("SSO_DEFAULT_ROLE debe ser uno de " + ", ".join(oidc.ROLE_PRIORITY) + " (o vacío para rechazar)")
+        if not self.sso_default_role and not self.sso_role_map:
+            problems.append("Sin SSO_ROLE_MAP ni SSO_DEFAULT_ROLE nadie podría entrar")
+        if problems:
+            raise ValueError("; ".join(problems))
+
     @property
     def rp_id(self) -> str:
         return (self.webauthn_rp_id or urlparse(self.public_web_url).hostname or "localhost").lower()
@@ -134,18 +180,23 @@ class Settings(BaseSettings):
                 problems.append("OIDC_JWKS_URL, OIDC_ISSUER y OIDC_AUDIENCE son obligatorios con AUTH_MODE=oidc")
             if self.demo_enabled:
                 problems.append("DEMO_ENABLED debe ser false en producción")
-            if self.auth_local_enabled or self.auth_mode == "local":
+            if self.auth_local_enabled or self.auth_mode == "local" or self.sso_enabled:
                 pepper = self.auth_pepper.get_secret_value()
                 if len(pepper) < 32 or pepper.startswith("dev-only"):
                     problems.append("AUTH_PEPPER debe ser un secreto propio de al menos 32 caracteres")
+            if self.auth_local_enabled:
                 if not self.smtp_host:
                     problems.append("SMTP_HOST es obligatorio: sin correo no hay verificación ni recuperación de contraseña")
                 if not self.public_web_url.startswith("https://"):
                     problems.append("PUBLIC_WEB_URL debe ser https:// en producción")
+            if self.sso_enabled and not self.public_web_url.startswith("https://"):
+                problems.append("PUBLIC_WEB_URL debe ser https:// para usar SSO")
             if not self.gitlab_api_url.startswith("https://"):
                 problems.append("GITLAB_API_URL debe ser https:// en producción (el token viaja en cada llamada)")
             if problems:
                 raise ValueError("; ".join(problems))
+        if self.sso_enabled:
+            self._check_sso()
         if self.passkeys_enabled:
             self._check_passkeys()
         if self.auth_mode == "dev" and len(self.jwt_secret.get_secret_value()) < 32:
