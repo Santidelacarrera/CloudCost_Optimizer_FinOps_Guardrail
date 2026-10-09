@@ -15,6 +15,7 @@ from .pricing import (
     InstanceSpec,
     instance_monthly_cost,
     instance_spec,
+    rds_monthly_cost,
     smaller_types,
     snapshot_monthly_cost,
     volume_monthly_cost,
@@ -24,6 +25,7 @@ ACTION_RESIZE = "RESIZE_INSTANCE"
 ACTION_REMOVE = "REMOVE_RESOURCE"
 ACTION_DELETE_VOLUME = "DELETE_VOLUME"
 ACTION_DELETE_SNAPSHOT = "DELETE_SNAPSHOT"
+ACTION_DELETE_DB = "DELETE_DB_INSTANCE"
 
 
 @dataclass(frozen=True)
@@ -44,7 +46,14 @@ class RuleConfig:
     # almacenamiento
     orphan_volume_days: int = 14
     old_snapshot_days: int = 90
+    # bases de datos RDS abandonadas: sin conexiones y CPU en reposo durante toda la ventana observada
+    rds_idle_connections: float = 0.5      # conexiones medias (por debajo = nadie se conecta)
+    rds_idle_cpu: float = 5.0
+    rds_min_observation_days: int = 14
     min_monthly_savings: float = 5.0
+    # Si es True, no se propone apagar/reducir/eliminar nada cuyo costo sea solo una estimación por tabla de precios
+    # (exige costo real: Cost Explorer o importación). Por defecto se propone igual, marcando la base del costo.
+    require_verified_cost: bool = False
 
     @classmethod
     def from_overrides(cls, overrides: dict[str, Any] | None) -> "RuleConfig":
@@ -98,7 +107,27 @@ def _current_cost(res: NormalizedResource) -> float:
         return volume_monthly_cost(res.volume_type, res.size_gb)
     if res.service == "ebs_snapshot":
         return snapshot_monthly_cost(res.size_gb)
+    if res.service == "rds":
+        return rds_monthly_cost(res.instance_type, res.size_gb, bool(res.attributes.get("multi_az")))
     return 0.0
+
+
+VERIFIED_COST_SOURCES = frozenset({"cost_explorer", "import"})
+
+
+def _cost_unverified(res: NormalizedResource, cfg: RuleConfig) -> bool:
+    return cfg.require_verified_cost and res.cost_source not in VERIFIED_COST_SOURCES
+
+
+def _cost_basis(res: NormalizedResource) -> dict[str, Any]:
+    """Origen del costo usado para calcular el ahorro: real (Cost Explorer/importación) o estimado por tabla de precios."""
+    basis = dict(res.attributes.get("cost_basis") or {})
+    basis.setdefault("source", res.cost_source)
+    basis["verified"] = res.cost_source in VERIFIED_COST_SOURCES
+    history = res.attributes.get("cost_history")
+    if history:
+        basis["history"] = {k: history[k] for k in ("scope", "tag_key", "tag_value", "monthly", "trend_pct") if k in history}
+    return basis
 
 
 def _clamp(value: float, lo: float = 0.0, hi: float = 0.97) -> float:
@@ -135,6 +164,8 @@ def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         return None
     if res.memory_avg is None and cfg.require_memory_metric:
         return None
+    if _cost_unverified(res, cfg):
+        return None
     if res.cpu_avg >= cfg.cpu_downsize_threshold:
         return None
     if res.memory_avg is not None and res.memory_avg >= cfg.mem_downsize_threshold:
@@ -168,6 +199,7 @@ def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
             "observation_days": res.observation_days, "environment": res.environment,
             "current_vcpu": spec.vcpu, "current_memory_gib": spec.memory_gib,
             "target_vcpu": best.target.vcpu, "target_memory_gib": best.target.memory_gib,
+            "cost_basis": _cost_basis(res),
             "projected_cpu_pct": best.cpu_pct, "projected_mem_pct": best.mem_pct, "projected_peak_pct": best.peak_pct,
             "thresholds": {"cpu": cfg.cpu_downsize_threshold, "memory": cfg.mem_downsize_threshold,
                            "target_cpu_ceiling": cfg.target_cpu_ceiling, "target_mem_ceiling": cfg.target_mem_ceiling},
@@ -185,6 +217,8 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     if res.cpu_max is not None and res.cpu_max >= cfg.idle_cpu_peak_threshold:
         return None
     if res.memory_avg is not None and res.memory_avg >= cfg.idle_mem_ceiling:
+        return None
+    if _cost_unverified(res, cfg):
         return None
     cost = _current_cost(res)
     if cost < cfg.min_monthly_savings:
@@ -214,7 +248,7 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
         params={"resource_type": "aws_instance", "resource_id": res.resource_id},
         evidence={"cpu_avg": res.cpu_avg, "cpu_max": res.cpu_max, "memory_avg": res.memory_avg,
                   "observation_days": res.observation_days, "environment": res.environment,
-                  "instance_type": res.instance_type},
+                  "instance_type": res.instance_type, "cost_basis": _cost_basis(res)},
         alternatives=alternatives,
     )
 
@@ -222,7 +256,7 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
 def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     if res.service != "ebs" or res.attached is not False or res.state != "available" or is_protected(res.tags):
         return None
-    if res.unattached_days is None or res.unattached_days < cfg.orphan_volume_days:
+    if res.unattached_days is None or res.unattached_days < cfg.orphan_volume_days or _cost_unverified(res, cfg):
         return None
     cost = _current_cost(res)
     if cost < cfg.min_monthly_savings:
@@ -239,7 +273,8 @@ def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
         params={"resource_type": "aws_ebs_volume", "resource_id": res.resource_id},
         evidence={"unattached_days": res.unattached_days, "size_gb": res.size_gb, "volume_type": res.volume_type,
-                  "environment": res.environment, "threshold_days": cfg.orphan_volume_days},
+                  "environment": res.environment, "threshold_days": cfg.orphan_volume_days,
+                  "cost_basis": _cost_basis(res)},
         alternatives=[{"action": "SNAPSHOT_THEN_DELETE",
                        "description": "Tomar un snapshot final antes de eliminar, si los datos pudieran necesitarse."}],
     )
@@ -250,7 +285,7 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         return None
     if res.attributes.get("managed_by") or res.attributes.get("ami_ids"):
         return None          # gestionado por AWS Backup/DLM o usado por una AMI: no es seguro proponerlo
-    if res.age_days is None or res.age_days < cfg.old_snapshot_days:
+    if res.age_days is None or res.age_days < cfg.old_snapshot_days or _cost_unverified(res, cfg):
         return None
     cost = _current_cost(res)
     if cost < cfg.min_monthly_savings:
@@ -267,12 +302,53 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
         params={"resource_type": "aws_ebs_snapshot", "resource_id": res.resource_id},
         evidence={"age_days": res.age_days, "size_gb": res.size_gb, "environment": res.environment,
-                  "savings_basis": "cota superior (snapshots incrementales)"},
+                  "savings_basis": "cota superior (snapshots incrementales)", "cost_basis": _cost_basis(res)},
+    )
+
+
+def rule_rds_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
+    """Base de datos RDS abandonada: sin conexiones ni CPU durante toda la ventana. Siempre destructiva; el riesgo lo fija risk.py (ALTO)."""
+    if res.service != "rds" or res.state != "available" or is_protected(res.tags):
+        return None
+    conns = res.attributes.get("connections_avg")
+    if conns is None or res.cpu_avg is None or res.observation_days < cfg.rds_min_observation_days:
+        return None
+    peak = res.attributes.get("connections_max")
+    if conns > cfg.rds_idle_connections or res.cpu_avg > cfg.rds_idle_cpu or (peak is not None and peak > 2):
+        return None
+    cost = _current_cost(res)
+    if cost < cfg.min_monthly_savings:
+        return None
+    confidence = 0.78
+    confidence += 0.10 if res.observation_days >= 30 else 0.0
+    confidence += 0.04 if peak is not None else 0.0
+    confidence += 0.03 if res.iac_address else 0.0
+    confidence -= 0.10 if res.attributes.get("deletion_protection") else 0.0      # alguien lo protegió a propósito: menos seguro
+    confidence -= 0.05 if res.attributes.get("read_replicas") else 0.0
+    backup = res.attributes.get("backup_retention_days")
+    return Finding(
+        rule_id="rds_idle", action=ACTION_DELETE_DB, resource=res, destructive=True,
+        title=f"Eliminar base de datos abandonada {res.name or res.resource_id}",
+        summary=(f"{res.instance_type or 'RDS'} ({res.attributes.get('engine', 'motor desconocido')}) sin conexiones: media {conns:g}"
+                 + (f", máximo {peak:g}" if peak is not None else "")
+                 + f", CPU media {res.cpu_avg:.1f}% durante {res.observation_days} días."
+                 + (" Tiene protección contra borrado: habrá que desactivarla antes de aplicar el cambio." if res.attributes.get("deletion_protection") else "")),
+        current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
+        estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
+        params={"resource_type": "aws_db_instance", "resource_id": res.resource_id},
+        evidence={"connections_avg": conns, "connections_max": peak, "cpu_avg": res.cpu_avg, "observation_days": res.observation_days,
+                  "environment": res.environment, "engine": res.attributes.get("engine"), "storage_gb": res.size_gb,
+                  "multi_az": bool(res.attributes.get("multi_az")), "backup_retention_days": backup,
+                  "deletion_protection": bool(res.attributes.get("deletion_protection"))},
+        alternatives=[
+            {"action": "SNAPSHOT_THEN_DELETE", "description": "Tomar un snapshot final antes de eliminar (en Terraform: skip_final_snapshot = false y final_snapshot_identifier)."},
+            {"action": "STOP_TEMPORARILY", "description": "Detenerla: no cobra cómputo, pero AWS la reinicia sola a los 7 días y el almacenamiento se sigue cobrando."},
+        ],
     )
 
 
 Rule = Callable[[NormalizedResource, RuleConfig], "Finding | None"]
-RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old]
+RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old, rule_rds_idle]
 
 
 def evaluate_resource(res: NormalizedResource, cfg: RuleConfig) -> list[Finding]:

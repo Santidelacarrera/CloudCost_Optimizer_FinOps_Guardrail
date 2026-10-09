@@ -73,3 +73,16 @@ def volume_monthly_cost(volume_type: str | None, size_gb: float | None) -> float
 def snapshot_monthly_cost(size_gb: float | None) -> float:
     """Cota superior: los snapshots son incrementales, el costo real suele ser menor."""
     return round(SNAPSHOT_GB_MONTH * float(size_gb or 0), 2)
+
+
+# RDS (MySQL/PostgreSQL, us-east-1, On-Demand, Single-AZ): USD por hora de instancia y USD por GB-mes de almacenamiento gp2/gp3.
+RDS_HOURLY = {"db.t3.medium": 0.072, "db.t3.large": 0.145, "db.m5.large": 0.171, "db.m5.xlarge": 0.342, "db.r5.large": 0.240,
+              "db.r5.xlarge": 0.480}
+RDS_STORAGE_GB_MONTH = 0.115
+
+
+def rds_monthly_cost(db_class: str | None, storage_gb: float | None, multi_az: bool = False) -> float:
+    """Instancia + almacenamiento; Multi-AZ duplica ambos. Clase desconocida: solo almacenamiento (el costo real manda cuando existe)."""
+    hourly = RDS_HOURLY.get(db_class or "", 0.0)
+    total = hourly * HOURS_PER_MONTH + RDS_STORAGE_GB_MONTH * float(storage_gb or 0)
+    return round(total * (2 if multi_az else 1), 2)

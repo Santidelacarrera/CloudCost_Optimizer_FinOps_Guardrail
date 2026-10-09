@@ -18,6 +18,8 @@ x-api-env: &api-env
   PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:?define PUBLIC_WEB_URL (https://...)}
   CORS_ORIGINS: ${PUBLIC_WEB_URL}
   AUTH_PEPPER: ${AUTH_PEPPER:?define AUTH_PEPPER (32+ caracteres)}
+  AUTH_PEPPER_ID: ${AUTH_PEPPER_ID:-1}                   # solo cambia al rotar el pepper (docs/pepper-rotation.md)
+  AUTH_PEPPER_PREVIOUS: ${AUTH_PEPPER_PREVIOUS:-}        # peppers anteriores, "id:secreto,id:secreto", mientras queden datos que los usen
   AUTH_TRUST_FORWARDED: "true"            # la API solo la alcanza la web, detrás de Caddy: la última entrada de X-Forwarded-For es confiable
   AUTH_HIBP_ENABLED: ${AUTH_HIBP_ENABLED:-true}
   SMTP_HOST: ${SMTP_HOST:?define SMTP_HOST}
@@ -25,9 +27,15 @@ x-api-env: &api-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM: ${SMTP_FROM:?define SMTP_FROM}
+  PASSKEYS_ENABLED: ${PASSKEYS_ENABLED:-true}          # llaves de acceso (WebAuthn); ver docs/passkeys.md
+  WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}                 # vacío = host de PUBLIC_WEB_URL (no lo cambies después: invalida las llaves)
+  WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-}
   GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
   OPA_MODE: ${OPA_MODE:-}
+  GITLAB_API_URL: ${GITLAB_API_URL:-https://gitlab.com/api/v4}
+  GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+  GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
   LLM_ENABLED: ${LLM_ENABLED:-false}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 

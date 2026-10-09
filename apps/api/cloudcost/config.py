@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .auth import pepper
 
 
 class Settings(BaseSettings):
@@ -20,11 +23,17 @@ class Settings(BaseSettings):
     auth_mode: Literal["dev", "oidc", "local"] = "dev"   # dev: tokens de desarrollo · oidc: IdP externo · local: solo cuentas propias
     auth_local_enabled: bool = True                      # cuentas propias (registro, contraseña, MFA) además del modo anterior
     auth_pepper: SecretStr = SecretStr("dev-only-pepper-change-me-0123456789abcdef")   # secreto del servidor para hashes y cifrado de MFA
+    auth_pepper_id: str = "1"                            # id del pepper actual; al rotar, usa uno nuevo (p. ej. "2") — ver docs/pepper-rotation.md
+    auth_pepper_previous: SecretStr | None = None        # peppers anteriores solo para leer datos viejos: "id:secreto[,id:secreto]"
     auth_session_hours: int = 12                         # caducidad absoluta de la sesión
     auth_session_idle_minutes: int = 120                 # caducidad por inactividad
     auth_signup_open: bool = True                        # false: solo se crean cuentas con invitación (para sumar una organización nueva hay que reabrirlo un momento)
     auth_mfa_issuer: str = "CloudCost"
     auth_hibp_enabled: bool = False                      # rechaza contraseñas filtradas (consulta k-anonimato a haveibeenpwned.com)
+    passkeys_enabled: bool = True                        # llaves de acceso (WebAuthn) como segundo factor y como inicio de sesión sin contraseña
+    webauthn_rp_id: str = ""                             # dominio de la web; por defecto el host de PUBLIC_WEB_URL (no se puede cambiar sin invalidar las llaves)
+    webauthn_rp_name: str = "CloudCost"
+    webauthn_origins: str = ""                           # orígenes permitidos, separados por comas; por defecto el de PUBLIC_WEB_URL
     auth_trust_forwarded: bool = False                   # confiar en X-Forwarded-For (solo detrás del BFF o de un proxy propio)
     smtp_host: str | None = None
     smtp_port: int = 587
@@ -44,6 +53,9 @@ class Settings(BaseSettings):
     github_api_url: str = "https://api.github.com"
     github_token: SecretStr | None = None
     github_webhook_secret: SecretStr | None = None
+    gitlab_api_url: str = "https://gitlab.com/api/v4"       # GitLab autoalojado: https://gitlab.miempresa.com/api/v4
+    gitlab_token: SecretStr | None = None
+    gitlab_webhook_secret: SecretStr | None = None
 
     # --- políticas (OPA/Rego) evaluadas dentro de la API antes de crear el PR
     opa_mode: Literal["off", "audit", "enforce", ""] | None = None   # vacío/ausente: enforce en producción, audit en desarrollo
@@ -65,8 +77,16 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     llm_timeout_seconds: float = 30.0
 
+    # --- onboarding de cuentas AWS con CloudFormation (un clic)
+    aws_platform_principal_arn: str | None = None        # ARN del rol de CloudCost que asumirá el rol del cliente (el que va en la plantilla)
+    aws_onboarding_template_url: str | None = None       # URL https de S3 donde está publicada infrastructure/cloudformation/readonly-role.yaml
+    aws_onboarding_stack_region: str = "us-east-1"
+
     # --- nube
-    aws_cost_explorer_resources: bool = False
+    aws_cost_explorer_resources: bool = True          # costo real por recurso (si falla, se usa la tabla de precios)
+    aws_cost_tag_key: str | None = None               # etiqueta de asignación de costos para el historial mensual (p. ej. "Name" o "app")
+    aws_cost_history_months: int = Field(6, ge=1, le=12)
+    aws_cost_metric: Literal["UnblendedCost", "AmortizedCost", "NetUnblendedCost", "NetAmortizedCost"] = "UnblendedCost"
 
     # --- observabilidad
     otel_exporter_otlp_endpoint: str | None = None
@@ -79,6 +99,30 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def rp_id(self) -> str:
+        return (self.webauthn_rp_id or urlparse(self.public_web_url).hostname or "localhost").lower()
+
+    @property
+    def webauthn_origin_list(self) -> tuple[str, ...]:
+        explicit = [o.strip().rstrip("/") for o in self.webauthn_origins.split(",") if o.strip()]
+        if explicit:
+            return tuple(explicit)
+        u = urlparse(self.public_web_url)
+        return (f"{u.scheme}://{u.netloc}",)
+
+    def _check_passkeys(self) -> None:
+        host = (urlparse(self.public_web_url).hostname or "").lower()
+        if not (host == self.rp_id or host.endswith("." + self.rp_id)):
+            raise ValueError("WEBAUTHN_RP_ID debe ser el dominio de PUBLIC_WEB_URL (o uno superior)")
+        for origin in self.webauthn_origin_list:
+            u = urlparse(origin)
+            ohost = (u.hostname or "").lower()
+            if u.scheme not in ("https", "http") or not (ohost == self.rp_id or ohost.endswith("." + self.rp_id)):
+                raise ValueError(f"WEBAUTHN_ORIGINS contiene un origen fuera de {self.rp_id}: {origin}")
+            if self.env == "production" and u.scheme != "https":
+                raise ValueError("WEBAUTHN_ORIGINS debe ser https:// en producción")
 
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":
@@ -98,11 +142,33 @@ class Settings(BaseSettings):
                     problems.append("SMTP_HOST es obligatorio: sin correo no hay verificación ni recuperación de contraseña")
                 if not self.public_web_url.startswith("https://"):
                     problems.append("PUBLIC_WEB_URL debe ser https:// en producción")
+            if not self.gitlab_api_url.startswith("https://"):
+                problems.append("GITLAB_API_URL debe ser https:// en producción (el token viaja en cada llamada)")
             if problems:
                 raise ValueError("; ".join(problems))
+        if self.passkeys_enabled:
+            self._check_passkeys()
         if self.auth_mode == "dev" and len(self.jwt_secret.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET debe tener al menos 32 caracteres")
         return self
+
+    @model_validator(mode="after")
+    def _pepper_ring_guard(self) -> "Settings":
+        previous = self.auth_pepper_previous.get_secret_value() if self.auth_pepper_previous else None
+        try:
+            _ = self.pepper_ring
+            if self.env == "production":
+                problems = pepper.validate_for_production(self.auth_pepper.get_secret_value(), previous)
+                if problems:
+                    raise ValueError("; ".join(problems))
+        except pepper.PepperError as exc:
+            raise ValueError(str(exc)) from exc
+        return self
+
+    @property
+    def pepper_ring(self) -> "pepper.PepperRing":
+        previous = self.auth_pepper_previous.get_secret_value() if self.auth_pepper_previous else None
+        return pepper.build_ring(self.auth_pepper.get_secret_value(), self.auth_pepper_id, previous)
 
 
 @lru_cache

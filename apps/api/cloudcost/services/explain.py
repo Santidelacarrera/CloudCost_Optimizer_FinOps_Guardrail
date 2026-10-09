@@ -15,6 +15,12 @@ def build_explanation(finding: Finding, risk: str, decision: PolicyDecision) -> 
     parts = [finding.summary, _RISK_TEXT[risk],
              f"Confianza {finding.confidence:.0%}; ahorro estimado USD {finding.estimated_monthly_savings:,.2f}/mes "
              f"(USD {finding.estimated_monthly_savings * 12:,.2f}/año)."]
+    basis = finding.evidence.get("cost_basis") or {}
+    if basis.get("verified"):
+        parts.append(f"Costo real según {'Cost Explorer' if basis.get('source') == 'cost_explorer' else 'el archivo importado'}"
+                     + (f" (últimos {basis['window_days']} días)" if basis.get("window_days") else "") + ".")
+    elif basis:
+        parts.append("Costo ESTIMADO con tabla de precios (sin costo real disponible): confirma el ahorro con tu factura antes de aprobar.")
     if finding.destructive:
         parts.append("La acción es destructiva: el cambio se propone solo como Pull Request y nunca se ejecuta directamente.")
     if decision.reinforced:

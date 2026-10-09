@@ -13,7 +13,7 @@ from starlette.routing import Match
 from . import db, metrics
 from .config import get_settings
 from .logging_config import configure_logging
-from .routers import admin, audit, dashboard, dev, expenses, imports, policies, recommendations, scans, webhooks
+from .routers import admin, audit, dashboard, dev, expenses, imports, policies, recommendations, reports, scans, webhooks
 from .routers import auth as auth_router
 from .services.accounts import AuthError
 from .services.recommendations import WorkflowError
@@ -98,7 +98,7 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=503, content={"status": "db_unavailable"})
         return {"status": "ready"}
 
-    for module in (scans, recommendations, audit, dashboard, admin, webhooks, imports, expenses, policies):
+    for module in (scans, recommendations, audit, dashboard, admin, webhooks, imports, expenses, policies, reports):
         app.include_router(module.router, prefix="/api/v1")
     app.include_router(auth_router.router, prefix="/api/v1")
     if settings.auth_mode == "dev" and settings.env != "production":
