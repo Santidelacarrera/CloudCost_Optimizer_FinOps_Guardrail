@@ -51,7 +51,7 @@ class AwsCollector:
         if not role_arn:
             self._session = boto3.Session()          # cadena de credenciales por defecto (solo desarrollo)
             return self._session
-        external_id = self.secrets.resolve(self.account.get("external_id_ref"))
+        external_id = self.secrets.resolve(self.account.get("external_id_ref"), self.account.get("organization_id"))
         params: dict[str, Any] = {"RoleArn": role_arn, "RoleSessionName": "cloudcost-optimizer", "DurationSeconds": 3600}
         if external_id:
             params["ExternalId"] = external_id

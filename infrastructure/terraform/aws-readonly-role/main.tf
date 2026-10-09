@@ -13,7 +13,7 @@ variable "trusted_principal_arn" {
 variable "external_id" {
   type        = string
   sensitive   = true
-  description = "ExternalId (anti confused-deputy); guárdalo en tu gestor de secretos y referénciarlo como aws-sm:..."
+  description = "ExternalId (anti confused-deputy); guárdalo en tu gestor de secretos y referénciarlo como aws-sm:cloudcost/<org_id>/..."
 }
 variable "enable_cost_explorer" {
   type    = bool

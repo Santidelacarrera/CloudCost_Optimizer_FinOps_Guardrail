@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..config import Settings, get_settings
 from ..db import tenant_tx
 from ..schemas import CloudAccountIn, RepositoryIn
+from ..secrets import SecretError, check_ref
 from ..security import MANAGE_CONNECTIONS, READ, Principal, require
 from ..services import audit
 
@@ -20,6 +21,16 @@ def list_accounts(p: Principal = Depends(require(*READ))):
                             "from cloud_accounts order by created_at").fetchall()
 
 
+def _check_refs(p: Principal, *refs: str | None) -> None:
+    """Las referencias de secreto deben estar en el espacio de nombres de la organización (evita leer secretos del servidor o de otras organizaciones)."""
+    for ref in refs:
+        if ref:
+            try:
+                check_ref(ref, p.org_id)
+            except SecretError as exc:
+                raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("/cloud-accounts", status_code=201)
 def create_account(body: CloudAccountIn, p: Principal = Depends(require(*MANAGE_CONNECTIONS)),
                    settings: Settings = Depends(get_settings)):
@@ -27,6 +38,7 @@ def create_account(body: CloudAccountIn, p: Principal = Depends(require(*MANAGE_
         raise HTTPException(422, "El proveedor demo está deshabilitado")
     if body.provider == "aws" and not body.role_arn and settings.env == "production":
         raise HTTPException(422, "En producción se requiere role_arn (rol de solo lectura con ExternalId)")
+    _check_refs(p, body.external_id_ref)
     try:
         with tenant_tx(p.org_id) as conn:
             row = conn.execute(
@@ -52,6 +64,7 @@ def create_repository(body: RepositoryIn, p: Principal = Depends(require(*MANAGE
                       settings: Settings = Depends(get_settings)):
     if body.provider == "local" and not settings.demo_enabled:
         raise HTTPException(422, "El proveedor local solo existe en modo demo")
+    _check_refs(p, body.token_ref)
     try:
         with tenant_tx(p.org_id) as conn:
             row = conn.execute(

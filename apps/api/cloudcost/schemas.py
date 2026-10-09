@@ -6,7 +6,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from .secrets import SecretError, check_ref
+
 _REF = re.compile(r"^(env|aws-sm):[A-Za-z0-9_./:@+=-]{1,200}$")
+
+
+def _checked_ref(v: str) -> str:
+    try:
+        check_ref(v)
+    except SecretError as exc:
+        raise ValueError(str(exc)) from exc
+    return v
 
 
 class ScanCreate(BaseModel):
@@ -40,8 +50,8 @@ class CloudAccountIn(BaseModel):
     @classmethod
     def _check_ref(cls, v: str | None) -> str | None:
         if v is not None and not _REF.match(v):
-            raise ValueError("Usa una referencia de secreto (env:NOMBRE o aws-sm:id), nunca el valor")
-        return v
+            raise ValueError("Usa una referencia de secreto (env:CC_SECRET_NOMBRE o aws-sm:cloudcost/<org_id>/nombre), nunca el valor")
+        return _checked_ref(v)
 
     @field_validator("regions")
     @classmethod
@@ -62,8 +72,8 @@ class RepositoryIn(BaseModel):
     @classmethod
     def _check_ref(cls, v: str | None) -> str | None:
         if v is not None and not _REF.match(v):
-            raise ValueError("Usa una referencia de secreto (env:NOMBRE o aws-sm:id), nunca el token")
-        return v
+            raise ValueError("Usa una referencia de secreto (env:CC_SECRET_NOMBRE o aws-sm:cloudcost/<org_id>/nombre), nunca el token")
+        return _checked_ref(v)
 
     @field_validator("iac_paths")
     @classmethod
