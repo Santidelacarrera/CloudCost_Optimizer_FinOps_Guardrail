@@ -29,4 +29,4 @@
 - **Registro**: `AUTH_SIGNUP_OPEN=false` limita la creación de cuentas a invitaciones.
 - **Copias**: `pg_dump` cifrado en tránsito hacia S3 (`BACKUP_S3_URI`); cada copia se restaura en una base temporal y se verifica la cadena de auditoría. El rol que copia debe saltarse RLS.
 - **Observabilidad**: métricas `http_requests_total`, `http_request_duration_seconds`, `auth_failures_total{code}` y `auth_logins_total{status}`; reglas en `infrastructure/docker/alerts.yml`. `/metrics` solo es alcanzable dentro de la red de Docker.
-- **Límites conocidos**: la CSP mantiene `'unsafe-inline'` en scripts (las páginas son estáticas; los nonces exigen renderizado dinámico). Pendiente: rotación del pepper, passkeys (WebAuthn), prueba de penetración externa.
+- **Límites conocidos**: la CSP de scripts usa un nonce por petición con `'strict-dynamic'` y **sin** `'unsafe-inline'` (`apps/web/middleware.ts`, `lib/csp.ts`; todas las páginas se renderizan en cada petición). `style-src` conserva `'unsafe-inline'` porque la interfaz usa atributos `style` de React, que un nonce no puede cubrir. Pendiente: passkeys (WebAuthn), prueba de penetración externa.

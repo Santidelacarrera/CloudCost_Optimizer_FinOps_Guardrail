@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
 import "./globals.css";
 
@@ -14,7 +15,12 @@ export const metadata: Metadata = {
 };
 export const viewport: Viewport = { themeColor: "#eff5eb", colorScheme: "light" };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+// Render dinámico en cada petición: el nonce de la CSP cambia con cada una y Next lo inserta en sus scripts al renderizar.
+// Leer las cabeceras (y marcarlo explícitamente) saca a todas las páginas de la generación estática.
+export const dynamic = "force-dynamic";
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  await headers();
   return (
     <html lang="es" className={`${display.variable} ${body.variable}`}>
       <body>{children}</body>
