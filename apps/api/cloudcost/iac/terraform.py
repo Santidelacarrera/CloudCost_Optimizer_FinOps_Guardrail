@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from ..domain.models import NormalizedResource, tf_types_for
 
@@ -196,12 +197,17 @@ def parse_resources(text: str, path: str = "main.tf") -> list[TfBlock]:
     return blocks
 
 
+if TYPE_CHECKING:
+    from .helm import HelmIndex, HelmTarget
+
+
 @dataclass
 class IacIndex:
     files: dict[str, str]
     blocks: list[TfBlock] = field(default_factory=list)
     state_ids: dict[str, str] = field(default_factory=dict)      # resource_id -> address (terraform.tfstate)
     parse_errors: dict[str, str] = field(default_factory=dict)
+    helm: "HelmIndex | None" = None                              # values.yaml de Helm (workloads de Kubernetes)
 
     @classmethod
     def build(cls, files: dict[str, str], state_ids: dict[str, str] | None = None) -> "IacIndex":
@@ -213,13 +219,23 @@ class IacIndex:
                 idx.blocks.extend(parse_resources(text, path))
             except HclSyntaxError as exc:
                 idx.parse_errors[path] = str(exc)
+        from .helm import HelmIndex
+
+        idx.helm = HelmIndex.build(files)
+        idx.parse_errors.update(idx.helm.parse_errors)
         return idx
 
-    def block_by_address(self, address: str) -> TfBlock | None:
+    def block_by_address(self, address: str) -> "TfBlock | HelmTarget | None":
+        if "#" in address:                                       # `ruta/values.yaml#ruta.yaml.del.bloque`
+            return self.helm.by_address(address) if self.helm else None
         return next((b for b in self.blocks if b.address == address), None)
 
-    def match(self, res: NormalizedResource) -> TfBlock | None:
-        """Relaciona un recurso real con su bloque IaC: 1) terraform.tfstate, 2) etiqueta Name. Ambigüedad => None."""
+    def match(self, res: NormalizedResource) -> "TfBlock | HelmTarget | None":
+        """Relaciona un recurso real con su bloque IaC: 1) terraform.tfstate, 2) etiqueta Name. Ambigüedad => None.
+
+        Los workloads de Kubernetes se relacionan con el bloque `resources:` de un values.yaml cuyos requests coinciden."""
+        if res.service == "k8s_workload":
+            return self.helm.match(res) if self.helm else None
         tf_types = tf_types_for(res)
         if not tf_types:
             return None
@@ -232,6 +248,12 @@ class IacIndex:
         candidates = [b for b in self.blocks if b.type in tf_types
                       and (b.name_tag == wanted or (res.provider in _NAME_ATTR and b.name_literal == wanted))]
         return candidates[0] if len(candidates) == 1 else None
+
+    def why_no_match(self, res: NormalizedResource) -> dict[str, str]:
+        """Motivo por el que `match` no encontró nada (para mostrarlo en la recomendación)."""
+        if res.service == "k8s_workload" and self.helm and res.resource_id in self.helm.reasons:
+            return self.helm.reasons[res.resource_id]
+        return {"code": "iac_not_found", "message": "No se encontró el recurso en el IaC del repositorio"}
 
     def references_to(self, block: TfBlock) -> list[str]:
         """Archivos que referencian `type.name` desde fuera del propio bloque."""

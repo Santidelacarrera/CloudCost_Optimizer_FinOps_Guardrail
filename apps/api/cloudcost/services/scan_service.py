@@ -127,7 +127,7 @@ def prepare_findings(resources: list[NormalizedResource], *, rule_cfg: RuleConfi
             except PatchError as exc:
                 evidence["patch_error"] = {"code": exc.code, "message": exc.message}
         elif index:
-            evidence["patch_error"] = {"code": "iac_not_found", "message": "No se encontró el recurso en el IaC del repositorio"}
+            evidence["patch_error"] = index.why_no_match(f.resource)
         explanation = build_explanation(f, risk, decision)
         alternatives = list(f.alternatives)
         llm_advice = None

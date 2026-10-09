@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .base import ChangeRequest, GitProviderError
+from .base import ChangeRequest, GitProviderError, is_iac_file
 
 
 class LocalDemoProvider:
@@ -25,7 +25,8 @@ class LocalDemoProvider:
         return p
 
     def list_files(self, repo: str, ref: str, paths: list[str]) -> dict[str, str]:
-        return {str(f.relative_to(self.root)): f.read_text() for f in sorted(self.root.rglob("*.tf"))}
+        return {str(f.relative_to(self.root)): f.read_text() for f in sorted(self.root.rglob("*"))
+                if f.is_file() and is_iac_file(str(f.relative_to(self.root)))}
 
     def get_file(self, repo: str, path: str, ref: str) -> str:
         return self._safe(path).read_text()
