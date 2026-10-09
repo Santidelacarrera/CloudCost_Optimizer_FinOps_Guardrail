@@ -14,8 +14,10 @@ Qué está resuelto en el repositorio, qué depende de ti y qué conviene hacer 
 - [x] Métricas HTTP y de autenticación, y reglas de alerta (`infrastructure/docker/alerts.yml`).
 - [x] Borradores de Términos y Política de privacidad en `/terms` y `/privacy`.
 - [x] Medición de capacidad de inicio de sesión (docs/deployment.md §7).
+- [x] Llaves de acceso (WebAuthn): segundo factor y entrada sin contraseña, probadas con un autenticador de software y, en CI, con uno virtual de Chromium ([passkeys.md](passkeys.md)).
 
 ## Depende de ti (no puedo hacerlo desde aquí)
+- [ ] Probar las llaves de acceso con tus dispositivos reales (Windows Hello, Touch ID/iCloud, Android, YubiKey) en tu dominio definitivo: el RP ID no se puede cambiar después ([passkeys.md](passkeys.md) §4).
 - [ ] Servidor con Docker, dominio y DNS apuntando a él; firewall con 22/80/443.
 - [ ] `.env.production` con secretos propios; **`AUTH_PEPPER` guardado además en un gestor aparte**.
 - [ ] Cuenta SMTP y registros SPF, DKIM y DMARC del dominio remitente ([email.md](email.md)); prueba de entrega a la bandeja principal.

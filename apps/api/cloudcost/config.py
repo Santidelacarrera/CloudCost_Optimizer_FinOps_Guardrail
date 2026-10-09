@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -25,6 +26,10 @@ class Settings(BaseSettings):
     auth_signup_open: bool = True                        # false: solo se crean cuentas con invitación (para sumar una organización nueva hay que reabrirlo un momento)
     auth_mfa_issuer: str = "CloudCost"
     auth_hibp_enabled: bool = False                      # rechaza contraseñas filtradas (consulta k-anonimato a haveibeenpwned.com)
+    passkeys_enabled: bool = True                        # llaves de acceso (WebAuthn) como segundo factor y como inicio de sesión sin contraseña
+    webauthn_rp_id: str = ""                             # dominio de la web; por defecto el host de PUBLIC_WEB_URL (no se puede cambiar sin invalidar las llaves)
+    webauthn_rp_name: str = "CloudCost"
+    webauthn_origins: str = ""                           # orígenes permitidos, separados por comas; por defecto el de PUBLIC_WEB_URL
     auth_trust_forwarded: bool = False                   # confiar en X-Forwarded-For (solo detrás del BFF o de un proxy propio)
     smtp_host: str | None = None
     smtp_port: int = 587
@@ -69,6 +74,30 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
+    @property
+    def rp_id(self) -> str:
+        return (self.webauthn_rp_id or urlparse(self.public_web_url).hostname or "localhost").lower()
+
+    @property
+    def webauthn_origin_list(self) -> tuple[str, ...]:
+        explicit = [o.strip().rstrip("/") for o in self.webauthn_origins.split(",") if o.strip()]
+        if explicit:
+            return tuple(explicit)
+        u = urlparse(self.public_web_url)
+        return (f"{u.scheme}://{u.netloc}",)
+
+    def _check_passkeys(self) -> None:
+        host = (urlparse(self.public_web_url).hostname or "").lower()
+        if not (host == self.rp_id or host.endswith("." + self.rp_id)):
+            raise ValueError("WEBAUTHN_RP_ID debe ser el dominio de PUBLIC_WEB_URL (o uno superior)")
+        for origin in self.webauthn_origin_list:
+            u = urlparse(origin)
+            ohost = (u.hostname or "").lower()
+            if u.scheme not in ("https", "http") or not (ohost == self.rp_id or ohost.endswith("." + self.rp_id)):
+                raise ValueError(f"WEBAUTHN_ORIGINS contiene un origen fuera de {self.rp_id}: {origin}")
+            if self.env == "production" and u.scheme != "https":
+                raise ValueError("WEBAUTHN_ORIGINS debe ser https:// en producción")
+
     @model_validator(mode="after")
     def _production_guards(self) -> "Settings":
         if self.env == "production":
@@ -89,6 +118,8 @@ class Settings(BaseSettings):
                     problems.append("PUBLIC_WEB_URL debe ser https:// en producción")
             if problems:
                 raise ValueError("; ".join(problems))
+        if self.passkeys_enabled:
+            self._check_passkeys()
         if self.auth_mode == "dev" and len(self.jwt_secret.get_secret_value()) < 32:
             raise ValueError("JWT_SECRET debe tener al menos 32 caracteres")
         return self

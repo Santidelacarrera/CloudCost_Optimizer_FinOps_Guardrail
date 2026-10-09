@@ -19,6 +19,10 @@ async function handler(req: NextRequest, ctx: { params: Promise<{ path: string[]
   if (PUBLIC_POST.has(key)) return relay(await callApi(`auth/${key}`, { method: "POST", body: await req.text(), req }));
   if (key === "login") return login(req);
   if (key === "mfa/verify") return mfaVerify(req);
+  if (key === "passkey/login/options") return relay(await callApi("auth/passkey/login/options", { method: "POST", body: "{}", req }));
+  if (key === "passkey/login") return passkeyLogin(req);
+  if (key === "mfa/passkey/options") return mfaPasskeyOptions(req);
+  if (key === "mfa/passkey") return mfaPasskey(req);
   if (key === "logout") return logout(req);
   return json({ detail: "No encontrado" }, 404);
 }
@@ -58,6 +62,47 @@ async function mfaVerify(req: NextRequest) {
   const res = json({ status: "ok", recovery_codes_left: data.recovery_codes_left ?? null });
   setCookie(res, SESSION_COOKIE, data.token ?? "", data.expires_in ?? 0);
   clearCookie(res, PENDING_COOKIE);
+  return res;
+}
+
+/** Respuesta de la API que emite sesión: el token va a la cookie httpOnly y nunca al JavaScript. */
+async function sessionFrom(r: Response) {
+  const text = await r.text();
+  let data: { token?: string; expires_in?: number; code?: string } = {};
+  try { data = JSON.parse(text); } catch { /* respuesta no JSON */ }
+  if (!r.ok || !data.token) {
+    const retry = r.headers.get("retry-after");
+    return { res: new NextResponse(text, { status: r.status, headers: { "Cache-Control": "no-store", "Content-Type": "application/json", ...(retry ? { "Retry-After": retry } : {}) } }), ok: false, code: data.code };
+  }
+  const res = json({ status: "ok" });
+  setCookie(res, SESSION_COOKIE, data.token, data.expires_in ?? 0);
+  clearCookie(res, PENDING_COOKIE);
+  return { res, ok: true, code: undefined };
+}
+
+async function passkeyLogin(req: NextRequest) {
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body.credential !== "object") return json({ detail: "Solicitud inválida", code: "invalid_response" }, 400);
+  const { res } = await sessionFrom(await callApi("auth/passkey/login", { method: "POST", body: JSON.stringify({ credential: body.credential }), req }));
+  return res;
+}
+
+async function mfaPasskeyOptions(req: NextRequest) {
+  const pending = req.cookies.get(PENDING_COOKIE)?.value;
+  if (!pending) return json({ detail: "La verificación venció. Inicia sesión de nuevo.", code: "mfa_expired" }, 401);
+  return relay(await callApi("auth/mfa/passkey/options", { method: "POST", body: JSON.stringify({ pending_token: pending }), req }));
+}
+
+async function mfaPasskey(req: NextRequest) {
+  const pending = req.cookies.get(PENDING_COOKIE)?.value;
+  const body = await req.json().catch(() => null);
+  if (!pending || !body || typeof body.credential !== "object") {
+    const res = json({ detail: "La verificación venció. Inicia sesión de nuevo.", code: "mfa_expired" }, 401);
+    clearCookie(res, PENDING_COOKIE);
+    return res;
+  }
+  const { res, ok, code } = await sessionFrom(await callApi("auth/mfa/passkey", { method: "POST", body: JSON.stringify({ pending_token: pending, credential: body.credential }), req }));
+  if (!ok && (code === "mfa_expired" || code === "locked")) clearCookie(res, PENDING_COOKIE);
   return res;
 }
 

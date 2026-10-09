@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -144,6 +144,38 @@ class ResetPasswordIn(BaseModel):
 class ChangePasswordIn(BaseModel):
     current_password: str = Field(min_length=1, max_length=1024)
     new_password: str = Field(min_length=1, max_length=1024)
+
+
+class PasskeyCredentialIn(BaseModel):
+    """Respuesta de `navigator.credentials.create/get` con los ArrayBuffer ya en base64url (la validación fina está en auth/webauthn.py)."""
+    id: str = Field(min_length=1, max_length=2048)
+    response: dict[str, Any]
+
+
+class PasskeyRegisterOptionsIn(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class PasskeyRegisterIn(BaseModel):
+    credential: PasskeyCredentialIn
+    name: str | None = Field(default=None, max_length=60)
+
+
+class PasskeyLoginIn(BaseModel):
+    credential: PasskeyCredentialIn
+
+
+class MfaPasskeyOptionsIn(BaseModel):
+    pending_token: str = Field(min_length=10, max_length=200)
+
+
+class MfaPasskeyIn(BaseModel):
+    pending_token: str = Field(min_length=10, max_length=200)
+    credential: PasskeyCredentialIn
+
+
+class PasskeyRemoveIn(BaseModel):
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class MfaSetupIn(BaseModel):

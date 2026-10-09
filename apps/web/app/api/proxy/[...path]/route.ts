@@ -4,7 +4,8 @@ import { SESSION_COOKIE, callApi, json, relay, sameOrigin } from "@/lib/server/b
 // BFF: reenvía a la API añadiendo el Bearer desde la cookie httpOnly. Solo rutas /api/v1/*.
 // Los pasos que emiten tokens van por /api/auth (guardan la cookie); aquí se bloquean para que ningún token vuelva al navegador.
 const BLOCKED = new Set(["auth/login", "auth/mfa/verify", "auth/logout", "auth/signup", "auth/verify-email", "auth/resend-verification",
-                         "auth/forgot-password", "auth/reset-password", "dev/token"]);
+                         "auth/forgot-password", "auth/reset-password", "auth/passkey/login", "auth/passkey/login/options", "auth/mfa/passkey",
+                         "auth/mfa/passkey/options", "dev/token"]);
 
 async function handler(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const { path } = await ctx.params;

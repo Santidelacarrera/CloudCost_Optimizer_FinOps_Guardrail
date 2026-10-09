@@ -22,6 +22,16 @@
 - **IP de cliente**: con `AUTH_TRUST_FORWARDED=true` la API toma la **última** entrada de `X-Forwarded-For`. Úsalo solo si la API únicamente es alcanzable por el BFF o un proxy propio que sobrescriba esa cabecera (en `docker-compose.yml` el puerto de la API solo se publica en 127.0.0.1).
 - **Una cuenta pertenece a una organización**; una invitación solo sirve para el correo invitado.
 
+## Llaves de acceso (WebAuthn / passkeys)
+Guía en [passkeys.md](passkeys.md). Segundo factor y entrada sin contraseña con huella, rostro, PIN o llave de seguridad.
+- **Resistentes al phishing**: la firma queda atada al dominio (RP ID) y al origen exacto; un sitio falso no puede obtener una respuesta válida. Se rechaza `crossOrigin`/`topOrigin`.
+- **Siempre con verificación del usuario** (UV) y presencia (UP): por eso una llave basta para entrar y cuenta como segundo factor.
+- **Retos de un solo uso**: 32 bytes aleatorios, 5 min, se consumen al verificar (con éxito o sin él), atados a la cuenta en el registro y en el 2FA. Una respuesta capturada no se puede repetir.
+- **Contador de firmas**: si crece debe seguir creciendo (detecta clonación); los passkeys sincronizados, que devuelven 0, no se penalizan. El avance es atómico (dos respuestas simultáneas no pasan las dos).
+- **Verificador propio sin dependencias nuevas** (ES256, EdDSA, RS256 ≥ 2048 bits; CBOR acotado, sin longitudes indefinidas, con límite de profundidad y de tamaño). No se valida la atestación (`attestation: none`): no se restringe el fabricante.
+- **En la base solo la clave pública**; los fallos no bloquean la cuenta (no se puede adivinar una firma): cuentan contra la IP y, en el 2FA, contra la sesión pendiente. Emisión de retos limitada por IP.
+- **Registrar o quitar una llave exige la contraseña**; registrar la primera cierra las demás sesiones y quitar una también. Las cuentas SSO no usan llaves. El comando de operador `reset-mfa` también quita las llaves de quien las perdió.
+
 ## Producción
 `ENV=production` exige `AUTH_PEPPER` propio (≥32), `SMTP_HOST` y `PUBLIC_WEB_URL` https, y se niega a arrancar con auth de desarrollo o demo activa. La web solo habilita el acceso de desarrollo con `DEV_LOGIN=dev` explícito (el compose de producción no lo define). El camino completo (TLS, copias, alertas, despliegue) está en [deployment.md](deployment.md) y la lista de comprobación en [launch-checklist.md](launch-checklist.md).
 

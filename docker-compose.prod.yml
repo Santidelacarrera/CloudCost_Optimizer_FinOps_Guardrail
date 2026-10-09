@@ -25,6 +25,9 @@ x-api-env: &api-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM: ${SMTP_FROM:?define SMTP_FROM}
+  PASSKEYS_ENABLED: ${PASSKEYS_ENABLED:-true}          # llaves de acceso (WebAuthn); ver docs/passkeys.md
+  WEBAUTHN_RP_ID: ${WEBAUTHN_RP_ID:-}                 # vacío = host de PUBLIC_WEB_URL (no lo cambies después: invalida las llaves)
+  WEBAUTHN_ORIGINS: ${WEBAUTHN_ORIGINS:-}
   GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
   LLM_ENABLED: ${LLM_ENABLED:-false}
