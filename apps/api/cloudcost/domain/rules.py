@@ -10,7 +10,7 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable
 
-from .models import NormalizedResource, is_protected
+from .models import COMPUTE_SERVICES, SNAPSHOT_SERVICES, VOLUME_SERVICES, NormalizedResource, is_protected, tf_type_for
 from .pricing import (
     InstanceSpec,
     instance_monthly_cost,
@@ -98,12 +98,12 @@ class Finding:
 def _current_cost(res: NormalizedResource) -> float:
     if res.monthly_cost and res.monthly_cost > 0:
         return float(res.monthly_cost)
-    if res.service == "ec2":
+    if res.service in COMPUTE_SERVICES:
         return instance_monthly_cost(res.instance_type) or 0.0
-    if res.service == "ebs":
+    if res.service in VOLUME_SERVICES:
         return volume_monthly_cost(res.volume_type, res.size_gb)
-    if res.service == "ebs_snapshot":
-        return snapshot_monthly_cost(res.size_gb)
+    if res.service in SNAPSHOT_SERVICES:
+        return snapshot_monthly_cost(res.size_gb, res.provider)
     if res.service == "rds":
         return rds_monthly_cost(res.instance_type, res.size_gb, bool(res.attributes.get("multi_az")))
     return 0.0
@@ -137,7 +137,7 @@ def _best_downsize(res: NormalizedResource, cfg: RuleConfig) -> _Downsize | None
 
 # --------------------------------------------------------------------------- reglas
 def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
-    if res.service != "ec2" or res.state != "running" or is_protected(res.tags):
+    if res.service not in COMPUTE_SERVICES or res.state != "running" or is_protected(res.tags):
         return None
     if res.cpu_avg is None or res.observation_days < cfg.min_observation_days:
         return None
@@ -184,7 +184,7 @@ def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
 
 
 def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
-    if res.service != "ec2" or res.state != "running" or is_protected(res.tags):
+    if res.service not in COMPUTE_SERVICES or res.state != "running" or is_protected(res.tags):
         return None
     if res.cpu_avg is None or res.observation_days < cfg.min_observation_days:
         return None
@@ -219,7 +219,7 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
                  + f" durante {res.observation_days} días: la instancia parece ociosa."),
         current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
-        params={"resource_type": "aws_instance", "resource_id": res.resource_id},
+        params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"cpu_avg": res.cpu_avg, "cpu_max": res.cpu_max, "memory_avg": res.memory_avg,
                   "observation_days": res.observation_days, "environment": res.environment,
                   "instance_type": res.instance_type},
@@ -228,7 +228,7 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
 
 
 def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
-    if res.service != "ebs" or res.attached is not False or res.state != "available" or is_protected(res.tags):
+    if res.service not in VOLUME_SERVICES or res.attached is not False or res.state != "available" or is_protected(res.tags):
         return None
     if res.unattached_days is None or res.unattached_days < cfg.orphan_volume_days:
         return None
@@ -245,7 +245,7 @@ def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
                  f"(umbral {cfg.orphan_volume_days})."),
         current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
-        params={"resource_type": "aws_ebs_volume", "resource_id": res.resource_id},
+        params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"unattached_days": res.unattached_days, "size_gb": res.size_gb, "volume_type": res.volume_type,
                   "environment": res.environment, "threshold_days": cfg.orphan_volume_days},
         alternatives=[{"action": "SNAPSHOT_THEN_DELETE",
@@ -254,10 +254,10 @@ def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
 
 
 def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
-    if res.service != "ebs_snapshot" or is_protected(res.tags):
+    if res.service not in SNAPSHOT_SERVICES or is_protected(res.tags):
         return None
     if res.attributes.get("managed_by") or res.attributes.get("ami_ids"):
-        return None          # gestionado por AWS Backup/DLM o usado por una AMI: no es seguro proponerlo
+        return None          # gestionado por un servicio de copias (AWS Backup/DLM, Azure Backup, programación de GCP) o usado por una imagen: no es seguro proponerlo
     if res.age_days is None or res.age_days < cfg.old_snapshot_days:
         return None
     cost = _current_cost(res)
@@ -270,10 +270,10 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         rule_id="snapshot_old", action=ACTION_DELETE_SNAPSHOT, resource=res, destructive=True,
         title=f"Eliminar snapshot antiguo {res.name or res.resource_id}",
         summary=(f"Snapshot de {res.size_gb:g} GB con {res.age_days} días de antigüedad (umbral {cfg.old_snapshot_days}), "
-                 "sin AMI asociada ni gestión por AWS Backup/DLM."),
+                 "sin imagen (AMI/imagen) asociada ni gestión por un servicio de copias automáticas."),
         current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
-        params={"resource_type": "aws_ebs_snapshot", "resource_id": res.resource_id},
+        params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"age_days": res.age_days, "size_gb": res.size_gb, "environment": res.environment,
                   "savings_basis": "cota superior (snapshots incrementales)"},
     )
