@@ -1,82 +1,306 @@
+<div align="center">
+
 # CloudCost Optimizer & FinOps Guardrail
 
-Plataforma FinOps **defensiva** para AWS: detecta desperdicio (EC2/EBS/snapshots), correlaciona IaC (Terraform), utilización y costo, explica cada hallazgo y **propone cambios mediante Pull Request**. Nunca modifica producción: todo pasa por validaciones técnicas, política y aprobación humana.
+**Detecta el desperdicio en tu infraestructura cloud y lo corrige por Pull Request — sin tocar producción jamás.**
+
+[![CI](https://github.com/Santidelacarrera/CloudCost_Optimizer_FinOps_Guardrail/actions/workflows/ci.yml/badge.svg)](https://github.com/Santidelacarrera/CloudCost_Optimizer_FinOps_Guardrail/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=nextdotjs&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%20·%20RLS-4169E1?logo=postgresql&logoColor=white)
+![OPA](https://img.shields.io/badge/policy-OPA%20%2F%20Rego-7D9199?logo=openpolicyagent&logoColor=white)
+
+AWS · Azure · GCP · Kubernetes — Terraform · Helm — GitHub · GitLab
+
+</div>
 
 ```
 Detectar → Analizar → Explicar → Proponer → Validar → Aprobar → Crear PR → Desplegar → Verificar ahorro
 ```
 
-## Qué incluye esta Fase 1 (MVP)
+---
 
-| Área | Implementación |
+## Contenido
+[Por qué existe](#por-qué-existe) · [Garantías de diseño](#garantías-de-diseño) · [Cómo funciona](#cómo-funciona) · [Qué detecta](#qué-detecta) · [Capacidades](#capacidades) · [Arquitectura](#arquitectura) · [Arranque rápido](#arranque-rápido-demo-sin-cuenta-cloud) · [Conectar un entorno real](#conectar-un-entorno-real) · [Seguridad](#seguridad) · [Calidad y CI](#calidad-y-ci) · [Configuración](#configuración) · [Desarrollo](#desarrollo) · [Estado y límites](#estado-y-límites-conocidos) · [Documentación](#documentación)
+
+---
+
+## Por qué existe
+
+Las herramientas FinOps suelen quedarse en el tablero («tienes USD 40 000 de desperdicio») o, en el otro extremo, ejecutan cambios con credenciales de escritura en producción. Ninguna de las dos cosas escala en una organización con equipos, auditoría y gestión del cambio.
+
+CloudCost adopta una postura distinta: **la plataforma nunca escribe en la nube.** Solo lee (con roles de solo lectura), correlaciona **costo real + utilización + configuración IaC** y convierte cada hallazgo en un **Pull Request revisable** sobre el repositorio de infraestructura del cliente. El merge, el despliegue y la responsabilidad del cambio siguen en el flujo que el cliente ya tiene.
+
+| Lo que ves en otras herramientas | Lo que hace CloudCost |
 |---|---|
-| Colectores | AWS (boto3, solo lectura: EC2, EBS, snapshots, CloudWatch, CloudTrail, AMI/Backup/DLM, Cost Explorer opcional) y **demo** sintético |
-| Reglas deterministas | `ec2_downsize`, `ec2_idle`, `ebs_orphan`, `snapshot_old` → riesgo → política |
-| IaC | Parser léxico de Terraform + parche mínimo por offsets; se niega ante drift, valores no literales, `count`/`for_each` o referencias |
-| Aprobación | Estado explícito; producción + destructivo ⇒ **aprobación reforzada** (2 aprobadores distintos, ≥1 ADMIN/SRE), PR en borrador |
-| Git | GitHub (rama + commit + PR idempotentes, **nunca merge**) y proveedor local para demo |
-| Auditoría | `audit_events` append-only con **cadena de hashes** verificable (`/api/v1/audit/verify`) |
-| Multi-tenant | PostgreSQL con **Row Level Security** forzada y rol sin BYPASSRLS |
-| LLM (opcional) | Solo asesor: contexto en allowlist, sin credenciales, salida validada por JSON Schema y reglas de negocio |
-| Observabilidad | Logs JSON, métricas Prometheus (API y worker), OpenTelemetry opcional |
-| Calidad | Pruebas unitarias + integración contra Postgres real, CI (ruff, pytest, trivy, checkov, terraform validate, OPA) |
+| «Esta instancia parece ociosa» | Evidencia explicable: CPU/memoria observadas, días de ventana, costo real del recurso, alternativas más seguras |
+| Botón «aplicar» con permisos de escritura | Parche mínimo de Terraform/Helm en un PR en borrador; **nunca** merge ni despliegue automático |
+| Aprobación en un chat | Máquina de estados con aprobación reforzada (dos personas, una con rol ADMIN/SRE) para cambios destructivos en producción |
+| Políticas que dependen del CI del cliente | Políticas **OPA/Rego evaluadas por la propia plataforma antes de crear el PR**, fallando cerrado |
+| Log de actividad editable | Auditoría **append-only encadenada por hash**, verificable por API y tras cada restauración de copia |
+| «Ahorramos X» | Verificación posterior: ahorro esperado vs. observado tras el despliegue |
 
-Ampliaciones posteriores, cada una en su propio documento (estado y límites en [docs/roadmap-status.md](docs/roadmap-status.md)): costo real por recurso con Cost Explorer, informes ejecutivos PDF/Excel, GitLab (Merge Requests), evaluación OPA/Rego nativa, incorporación de AWS con CloudFormation de un clic, colectores Azure y GCP, Kubernetes/Helm, SSO (Entra ID/Okta), passkeys y rotación del pepper.
+---
 
-## Arranque rápido (demo, sin cuenta AWS)
+## Garantías de diseño
+
+Estas son invariantes del sistema, no buenas intenciones; cada una tiene una prueba que la sostiene.
+
+1. **Solo lectura hacia la nube.** Roles IAM/RBAC de solo lectura con `ExternalId` anti confused-deputy (AWS) y plantillas de Terraform/CloudFormation incluidas. Las credenciales se guardan **por referencia** (`env:CC_SECRET_*`, `aws-sm:cloudcost/<org_id>/…`), nunca por valor, y cada referencia queda confinada al espacio de nombres de su organización.
+2. **Nunca merge, nunca despliegue.** La plataforma crea ramas, commits y PR (idempotentes). Lo destructivo en producción abre el PR en **borrador**.
+3. **Humano en el circuito.** Nada avanza de `PENDING_APPROVAL` sin aprobación; las aprobaciones cuentan por versión de la recomendación y se invalidan si el hallazgo cambia materialmente.
+4. **Los parches se niegan antes de equivocarse.** Si hay *drift* entre IaC y nube, valores no literales, `count`/`for_each` o referencias cruzadas, no se genera parche: se explica por qué.
+5. **Aislamiento multi-tenant en la base de datos.** Row Level Security `FORCE` con contexto por transacción; el rol de aplicación no es superusuario ni `BYPASSRLS`. Una prueba por introspección falla si aparece una tabla sin RLS.
+6. **Auditoría inmutable.** Sin `UPDATE`/`DELETE`/`TRUNCATE` para el rol de aplicación (permisos + triggers) y cadena SHA-256 verificable.
+7. **El LLM no decide.** Opcional y apagado por defecto: sin credenciales de nube, contexto en allowlist, salida validada por JSON Schema y reglas de negocio. Redacta; jamás aprueba ni ejecuta.
+8. **Producción no arranca insegura.** `ENV=production` rechaza arrancar con autenticación de desarrollo, demo activa, pepper por defecto o URLs sin HTTPS.
+
+---
+
+## Cómo funciona
+
+```mermaid
+flowchart LR
+  subgraph Detectar y analizar
+    C[Colectores de solo lectura<br/>AWS · Azure · GCP · Kubernetes · CSV] --> N[Normalización<br/>recursos + métricas + costo real]
+    N --> R[Reglas deterministas<br/>→ riesgo → política]
+  end
+  R --> E[Explicación<br/>evidencia + alternativas]
+  E -.->|opcional, validado| L[LLM asesor]
+  E --> A{Aprobación humana<br/>estándar o reforzada}
+  A -->|aprobado| P[Parche mínimo<br/>Terraform / Helm values]
+  P --> O{OPA / Rego<br/>enforce}
+  O -->|permitido| PR[Rama + commit + PR<br/>GitHub · GitLab]
+  O -->|denegado| X[422 — nada se crea]
+  PR --> M[Merge y despliegue<br/>en el flujo del cliente]
+  M --> V[Verificación de ahorro<br/>esperado vs. observado]
+```
+
+**Máquina de estados** de cada recomendación:
+`DETECTED → ANALYZED → PROPOSED → PENDING_APPROVAL → APPROVED | REJECTED → PR_CREATED → MERGED → DEPLOYED → VERIFIED`
+(una recomendación que la política no permite se queda en `PROPOSED`; un PR cerrado sin merge vuelve a `APPROVED`).
+
+**Aprobación.** Estándar: un aprobador (ADMIN, FINOPS o SRE). Reforzada —acciones destructivas en producción o entorno desconocido, o riesgo ALTO—: dos usuarios distintos, al menos uno ADMIN/SRE, PR en borrador y automatización bloqueada. Un entorno ausente o no reconocido (`Prod-EU`) cuenta como producción: es la opción prudente.
+
+---
+
+## Qué detecta
+
+Reglas deterministas, explicables y con umbrales configurables (`RuleConfig`); ninguna ejecuta nada.
+
+| Regla | Detecta | Acción propuesta |
+|---|---|---|
+| `ec2_downsize` | Instancia sobredimensionada (CPU y memoria bajo umbral durante la ventana, con proyección de uso en el tipo destino) | Reducir hasta 2 tamaños |
+| `ec2_idle` | Instancia ociosa (CPU media y pico mínimos) | Eliminar *(destructiva; alternativa: reducir)* |
+| `ebs_orphan` | Volumen sin adjuntar ≥ 14 días | Eliminar *(alternativa: snapshot final)* |
+| `snapshot_old` | Snapshot antiguo no gestionado por AWS Backup/DLM/Azure Backup ni usado por una imagen | Eliminar *(ahorro como cota superior)* |
+| `rds_idle` | Base de datos RDS sin conexiones y CPU en reposo toda la ventana *(hoy solo con datos de demostración: el colector real de AWS aún no inventaría RDS)* | Eliminar *(destructiva)* |
+| `k8s_overprovisioned` | Workload con *requests* de CPU/memoria muy por encima del uso | Ajustar `values.yaml` de Helm |
+
+El **ahorro** se calcula con el **costo real de cada recurso** (Cost Explorer a nivel de recurso en AWS) y, si no está disponible, con una tabla de precios marcada como *«Costo ESTIMADO»*. Una política estricta (`require_verified_cost`) impide proponer apagar o reducir recursos cuyo costo solo sea estimado.
+
+---
+
+## Capacidades
+
+| Área | Qué incluye |
+|---|---|
+| **Nubes** | **AWS** (EC2, EBS y snapshots, con CloudWatch, CloudTrail, AMI/Backup/DLM y Cost Explorer por recurso con historial por etiqueta) · **Azure** y **GCP** (REST de solo lectura) · **Kubernetes** (Prometheus + kube-state-metrics) · **CSV** importado · **demo** sintético |
+| **Onboarding** | CloudFormation de un clic para AWS · módulos de Terraform de solo lectura para AWS, Azure y GCP |
+| **IaC** | Parser léxico de Terraform y parche mínimo por *offsets* (el resultado debe volver a parsear) · parche de `values.yaml` de Helm |
+| **Git** | GitHub y GitLab (Merge Requests), con webhooks autenticados · proveedor local para la demo |
+| **Políticas** | OPA/Rego nativo en la API (`enforce` / `audit` / `off`, falla cerrado), contexto de la plataforma (`reinforced_approval`, `change_ticket`) y políticas propias del cliente |
+| **Informes** | Informe ejecutivo PDF y Excel · gráfico de ahorro proyectado (gasto actual vs. optimizado) · análisis de documentos financieros (gastos comunes, estados de pago de obra) |
+| **Identidad** | Cuentas propias (scrypt + *pepper*, bloqueo progresivo, TOTP + códigos de recuperación, sesiones revocables) · **passkeys / WebAuthn** · **SSO OIDC** (Entra ID, Okta) con mapeo de roles · invitaciones con rol · rotación del *pepper* sin invalidar credenciales |
+| **Roles** | `ADMIN` · `FINOPS` · `SRE` · `DEVELOPER` · `AUDITOR` · `VIEWER` (RBAC verificado en CI sobre **todas** las rutas) |
+| **Operación** | Logs JSON · métricas Prometheus (API y worker) + reglas de alerta · OpenTelemetry opcional · copias a S3 con **restauración de prueba y verificación de la cadena de auditoría** · despliegue con Caddy (TLS automático) |
+
+---
+
+## Arquitectura
+
+Monolito modular ([ADR-0001](docs/adr/0001-modular-monolith.md)): un paquete Python (`cloudcost`) lo comparten la API y el worker; la separación en servicios llegará cuando el dominio se estabilice, no antes.
+
+```mermaid
+flowchart LR
+  B[Navegador] -->|cookie httpOnly · SameSite=Strict| W[Next.js 15<br/>BFF + UI]
+  W -->|Bearer opaco, red interna| API[FastAPI]
+  API --> PG[(PostgreSQL 16<br/>RLS FORCE)]
+  API -->|encola| RD[(Redis)] --> WK[Worker Celery]
+  WK -->|solo lectura| CL[(AWS · Azure · GCP<br/>Prometheus)]
+  WK -->|lee IaC| GIT[(GitHub · GitLab)]
+  API -->|rama + commit + PR<br/>nunca merge| GIT
+  GIT -->|webhook firmado| API
+  API -->|opa eval| OPA[[OPA / Rego]]
+  WK -.->|contexto en allowlist| LLM[LLM asesor<br/>opcional]
+```
+
+| Capa | Tecnología y decisión |
+|---|---|
+| API | FastAPI + psycopg 3; transacciones con contexto de tenant (`tenant_tx`) y de autenticación (`auth_tx`) |
+| Worker | Celery + Redis ([ADR-0002](docs/adr/0002-celery-mvp.md)); la red (colectores) queda fuera de las transacciones |
+| Web | Next.js 15 como *backend for frontend*: el navegador nunca ve el token de sesión; CSP con *nonce* |
+| Datos | PostgreSQL 16; migraciones SQL versionadas (`migrations/`), RLS y auditoría en el propio esquema |
+| Políticas | `packages/policies/*.rego` con pruebas `opa test`; ejecutadas con el binario oficial (subproceso sin shell, límites de tiempo y tamaño, entorno sin secretos) |
+| Despliegue | Docker Compose para desarrollo y producción (`docker-compose.prod.yml` + Caddy), imágenes con escaneo Trivy |
+
+Detalle: [docs/architecture.md](docs/architecture.md).
+
+---
+
+## Arranque rápido (demo, sin cuenta cloud)
+
+Requisitos: Docker con Compose.
 
 ```bash
-cp .env.example .env            # revisa contraseñas
-docker compose up --build       # postgres, redis, migraciones+seed, api, worker, web
+cp .env.example .env            # revisa las contraseñas
+docker compose up --build       # postgres, redis, migraciones + seed, api, worker, web
 ```
-- UI: http://localhost:5985 (puertos configurables con `WEB_PORT`/`API_PORT` en `.env`). Crea tu cuenta desde **Crear cuenta** (sin servidor de correo, el enlace de confirmación aparece en pantalla) o entra con la demostración de desarrollo (elige rol, p. ej. `FINOPS`).
-- API/Swagger: http://localhost:5986/docs
-- Pulsa **Ejecutar escaneo** → 21 recursos sintéticos, 13 hallazgos, ≈ USD 1.573/mes (AWS, Azure, GCP y Kubernetes).
-- Flujo por consola: `pip install requests && python scripts/demo_flow.py`
 
-En modo demo el "PR" se escribe en disco (proveedor local) y el merge se simula desde la UI.
+| Qué | Dónde |
+|---|---|
+| Interfaz | http://localhost:5985 |
+| API / Swagger | http://localhost:5986/docs |
+
+1. Crea tu cuenta con **Crear cuenta** (sin servidor de correo, el enlace de confirmación aparece en pantalla) o entra con el acceso de desarrollo eligiendo un rol (p. ej. `FINOPS`).
+2. Pulsa **Ejecutar escaneo**: **21 recursos sintéticos de AWS, 13 hallazgos, ≈ USD 1.573/mes** de ahorro estimado.
+3. Abre una recomendación, revisa la evidencia, **apruébala** y **crea el PR**: en modo demo se escribe en disco (proveedor local) y el merge se simula desde la UI.
+4. Revisa **Auditoría** y verifica la cadena (`GET /api/v1/audit/verify`).
+
+Flujo completo por consola: `pip install requests && python scripts/demo_flow.py`.
+Puertos configurables con `WEB_PORT` / `API_PORT`.
+
+---
+
+## Conectar un entorno real
+
+| Quiero conectar… | Guía |
+|---|---|
+| AWS (rol de solo lectura, CloudFormation o Terraform, GitHub/GitLab, webhooks) | [Runbook](docs/runbook.md) · [Onboarding AWS](docs/onboarding-aws.md) |
+| Azure y GCP | [docs/onboarding-azure-gcp.md](docs/onboarding-azure-gcp.md) |
+| Kubernetes / Helm | [docs/kubernetes-helm.md](docs/kubernetes-helm.md) |
+| Políticas propias de OPA | [docs/policies.md](docs/policies.md) |
+| SSO (Entra ID / Okta) y passkeys | [docs/sso.md](docs/sso.md) · [docs/passkeys.md](docs/passkeys.md) |
+| Producción (dominio, TLS, copias, alertas) | [docs/deployment.md](docs/deployment.md) · [docs/email.md](docs/email.md) · [docs/launch-checklist.md](docs/launch-checklist.md) |
+
+También puedes **importar un CSV** (instancias EC2, volúmenes EBS o snapshots con uso y costo; hasta 5 000 filas / 2 MB) y se aplican las mismas reglas, políticas y aprobaciones, o **analizar documentos financieros** (estados de gastos, estados de pago de obra) con reglas deterministas de cuadratura y anomalías; ese contenido **no se guarda**: la auditoría registra solo cifras agregadas.
+
+---
+
+## Seguridad
+
+Postura resumida (el detalle y las variables están en [docs/security.md](docs/security.md)):
+
+- **Contraseñas:** scrypt sobre HMAC con *pepper* del servidor fuera de la base; política ≥ 12 caracteres con rechazo de contraseñas comunes; límite de hashes simultáneos.
+- **Sin enumeración de cuentas:** registro, login y recuperación responden igual exista o no el correo.
+- **Bloqueo progresivo** por cuenta e IP, registrado en la base (válido con varias réplicas).
+- **Sesiones** opacas de 256 bits (solo su hash en la base), caducidad absoluta e inactividad, revocables; passkeys y TOTP con anti-reutilización.
+- **Web:** cookies `httpOnly` + `SameSite=Strict`, comprobación de origen en el BFF, CSP con *nonce*, cabeceras de seguridad.
+- **Secretos:** por referencia y confinados por organización; una referencia escrita por un usuario no puede leer variables del servidor ni secretos de otro tenant.
+- **Webhooks** autenticados (HMAC SHA-256 en GitHub, token en GitLab) con comparación en tiempo constante.
+- **Cadena de suministro:** Trivy sobre el repositorio en cada PR y sobre las imágenes al publicar, Checkov (informativo) y `terraform validate` de los módulos de solo lectura.
+
+**Prueba de penetración externa:** *no realizada todavía.* El repositorio incluye el paquete para contratarla —[alcance y reglas de compromiso](docs/pentest/scope.md), [modelo de amenazas STRIDE](docs/pentest/threat-model.md) y [checklist con cobertura automática](docs/pentest/checklist.md)— y pruebas permanentes que ya verifican en cada PR el aislamiento entre organizaciones, que **toda ruta** exige credenciales salvo una lista blanca explícita y la matriz de roles. Un fallo real de ese modelo (referencias de secreto que podían apuntar a variables del servidor) ya se encontró y corrigió al prepararlo.
+
+Si encuentras una vulnerabilidad, no publiques los detalles en una incidencia abierta: avisa a los mantenedores por un canal privado.
+
+---
+
+## Calidad y CI
+
+Más de 370 pruebas entre unitarias, de integración contra **PostgreSQL real** y de punta a punta con navegador (Playwright). Cada PR ejecuta:
+
+| Job | Qué valida |
+|---|---|
+| `api` | `ruff`, migraciones, `pytest` (incluye aislamiento RLS, matriz de rutas/roles, auditoría y OPA real) |
+| `web` | `tsc --noEmit` y `next build` |
+| `e2e` | Pila completa en Docker con navegador real y buzón de correo de prueba (cuenta, 2FA, passkeys, informes, gráfico, cabeceras de seguridad) |
+| `policies` | `opa check --strict`, `opa fmt` y `opa test` de las políticas Rego; `terraform validate` de los módulos de solo lectura |
+| `security` | Trivy (HIGH/CRITICAL, bloquea) y Checkov (informativo) |
+| `backups` | Copia → restauración en base temporal → verificación de la cadena de auditoría (incluye copia dañada y auditoría alterada) |
+| `docker` | Construcción de imágenes y validación de `docker-compose.prod.yml` |
+| `cloudformation` | `cfn-lint` de la plantilla de onboarding y paridad con el módulo de Terraform |
+
+---
+
+## Configuración
+
+Las variables completas están comentadas en [`.env.example`](.env.example) y [`.env.production.example`](.env.production.example). Las que más importan:
+
+| Variable | Para qué | Por defecto |
+|---|---|---|
+| `ENV` | `development` · `test` · `production` (activa las guardas de arranque) | `development` |
+| `AUTH_MODE` / `AUTH_LOCAL_ENABLED` | `dev`, `oidc` o `local`; cuentas propias | `dev` / `true` |
+| `AUTH_PEPPER`, `AUTH_PEPPER_ID`, `AUTH_PEPPER_PREVIOUS` | Secreto de contraseñas y su rotación | valor de desarrollo (prohibido en producción) |
+| `AUTH_SIGNUP_OPEN` | `false`: solo se crean cuentas por invitación | `true` |
+| `SSO_ENABLED`, `SSO_PROVIDER`, `SSO_ROLE_MAP` | SSO OIDC (Entra / Okta) | apagado |
+| `PASSKEYS_ENABLED`, `WEBAUTHN_RP_ID` | Passkeys (fija el RP ID antes de invitar usuarios) | encendido |
+| `OPA_MODE` | `enforce` · `audit` · `off` | `audit` en desarrollo, `enforce` en producción |
+| `GITHUB_TOKEN` / `GITLAB_TOKEN` + secretos de webhook | Proveedores Git | — |
+| `AWS_COST_EXPLORER_RESOURCES`, `AWS_COST_TAG_KEY` | Costo real por recurso e historial por etiqueta | `true` / — |
+| `LLM_ENABLED`, `LLM_PROVIDER` | Asesor opcional (OpenAI o Gemini) | `false` |
+| `DEMO_ENABLED` | Colector y proveedor Git de demostración | `true` (prohibido en producción) |
+| `SMTP_*`, `PUBLIC_WEB_URL` | Correo transaccional y URL pública (HTTPS en producción) | — |
+
+---
 
 ## Desarrollo
 
 ```bash
-make install
-SEED_DEV=true DATABASE_ADMIN_URL=postgresql://postgres:pw@localhost:5432/cloudcost APP_DB_PASSWORD=pw2 sh scripts/migrate.sh
-export DATABASE_URL=postgresql://cloudcost_app:pw2@localhost:5432/cloudcost DATABASE_ADMIN_URL=...
-make test
+make install                    # dependencias Python (requirements-dev.txt)
+make lint                       # ruff check apps tests
+SEED_DEV=true DATABASE_ADMIN_URL=postgresql://postgres:pw@localhost:5432/cloudcost \
+  APP_DB_PASSWORD=pw2 sh scripts/migrate.sh
+export DATABASE_URL=postgresql://cloudcost_app:pw2@localhost:5432/cloudcost
+export DATABASE_ADMIN_URL=postgresql://postgres:pw@localhost:5432/cloudcost
+make test                       # pytest
 ```
-Sin `DATABASE_URL` las pruebas de integración se omiten.
 
-## Cuentas, seguridad y equipo
-Registro con organización propia, confirmación de correo, inicio de sesión con bloqueo progresivo, verificación en dos pasos (aplicación de autenticación + códigos de recuperación), sesiones revocables, recuperación de contraseña e invitaciones con rol. Desde la UI: **Cuenta y seguridad** y **Equipo** (solo administración). Detalle técnico y variables (`AUTH_PEPPER`, `SMTP_*`…) en [docs/security.md](docs/security.md). Diseño: tema claro "papel contable"; las tipografías (Bricolage Grotesque e Instrument Sans, licencia OFL) van incluidas en `apps/web/app/fonts`.
+Sin `DATABASE_URL` / `DATABASE_ADMIN_URL` las pruebas de integración se omiten (las unitarias no necesitan base de datos). Las pruebas de OPA usan el binario real: instala [`opa`](https://www.openpolicyagent.org/docs/latest/#running-opa) para correrlas en local. El front vive en `apps/web` (`npm install && npm run dev`; el e2e con `npx playwright test`).
 
-## Importar un CSV (sin conectar AWS)
-En la UI, **Importar CSV**: descarga la plantilla, rellénala con una fila por recurso (EC2, EBS o snapshots) con su uso y costo, y súbela. Se aplican las mismas reglas, políticas, aprobaciones y PR. Excel: *Guardar como → CSV UTF-8*. Límites: 5000 filas / 2 MB. Un presupuesto genérico sin recursos ni uso no permite detectar desperdicio. API: `POST /api/v1/imports`.
+**Convenciones del repositorio**
+- Una ruta nueva debe clasificarse en `tests/integration/test_route_auth.py`; una tabla nueva debe tener RLS (la prueba por introspección lo exige).
+- Todo `secrets.resolve(...)` recibe el `organization_id` del dueño de la referencia (hay una prueba estática).
+- Un hallazgo de seguridad corregido añade una prueba de regresión y actualiza el [modelo de amenazas](docs/pentest/threat-model.md).
 
-## Analizar documentos financieros (gastos comunes, presupuestos, estados de pago de obra)
-En la UI, **Analizar gastos**: sube uno o varios CSV (un mes por archivo, o una columna `mes`); detecta solo de qué tipo es cada uno.
-- **Estados de gastos**: tablas planas `descripción;monto[;categoría][;mes]` o informes con secciones y filas «Sub-Total/Total» (típico de gastos comunes), incluidos los numerados (`1.` / `1.1.` / `1.1.1.`) con proveedor, N° de documento, fecha y descripción: las hojas son las partidas y cada nivel superior se comprueba contra la suma de su detalle. Separador `;` `,` tab o `|`; montos `$1.234.567` o `1,234.56`; UTF-8 o Windows-1252.
-  Reglas: cuadratura de resúmenes y totales, fondo de reserva contra el % declarado, mismo documento cobrado dos veces, cobros idénticos repetidos, cobro muy superior a los demás del mismo proveedor, posible mismo beneficiario en dos secciones, concentración y, con varios meses, alzas/bajas ≥15 %, partidas nuevas y desaparecidas (no compara archivos que casi no comparten partidas).
-- **Estados de pago / flujo financiero de obra** (UF u otra moneda): bloques Contrato · Proyectado actualizado · Real con `Avance % · Avance · Retenciones · Dev Anticipo · Total`. Comprueba el anticipo, que cada Total = Avance − Retención − Devolución, los totales declarados, la tabla de acumulados y la devolución de anticipo acumulada (nunca puede superar el anticipo); mide el atraso real vs proyectado, la tendencia de los últimos 3 EP y estima el término al ritmo reciente.
-Todo es determinista (sin IA). Los hallazgos son pistas para revisar con el monto involucrado, no ahorros garantizados. El contenido **no se guarda** (suele traer nombres y sueldos): la auditoría registra solo cifras agregadas. API: `POST /api/v1/expenses/analyze` (roles ADMIN/FINOPS/SRE).
+---
 
-## Uso real con AWS y GitHub
-Ver [docs/runbook.md](docs/runbook.md) (rol IAM de solo lectura con Terraform en `infrastructure/terraform/aws-readonly-role`, token y webhook de GitHub, OIDC).
+## Estado y límites conocidos
+
+Esto es lo que **no** está verificado, dicho sin adornos (detalle en [docs/roadmap-status.md](docs/roadmap-status.md)):
+
+- **Contra sistemas reales:** el colector de AWS, Azure, GCP y Kubernetes se probó con respuestas simuladas y datos de demostración/importados; **falta una prueba con cuentas reales**. SSO nunca se ejecutó contra un tenant real de Entra ID u Okta (hay una lista de comprobación en [docs/sso.md](docs/sso.md)). Passkeys solo con autenticadores de software y el virtual de Chromium: sin llaves físicas ni Safari/Firefox.
+- **Sin pentest humano** (ver [Seguridad](#seguridad)).
+- **Cobertura de inventario:** el colector real de AWS lee EC2, EBS y snapshots; RDS y otros servicios solo existen hoy en la demostración.
+- **Verificación de ahorro** compara costos posteriores con la estimación; no sustituye a una conciliación de facturación.
+- **Alcance de IaC:** Terraform (literales) y `values.yaml` de Helm; no hay parches para CDK, Pulumi, Bicep ni manifiestos YAML sueltos.
+- **Operación pendiente de tu lado:** dominio y servidor, SMTP con SPF/DKIM/DMARC, revisión legal de `/terms` y `/privacy`, ensayo de restauración y monitor externo ([lista de lanzamiento](docs/launch-checklist.md)).
+- Un mismo *pepper* firma todo el estado criptográfico de contraseñas y TOTP: guárdalo fuera del servidor ([rotación](docs/pepper-rotation.md)).
+
+---
 
 ## Documentación
-- [Arquitectura](docs/architecture.md) · [Seguridad](docs/security.md) · [Runbook](docs/runbook.md) · [ADRs](docs/adr/)
-- Producción: [Despliegue](docs/deployment.md) · [Correo (SPF/DKIM/DMARC)](docs/email.md) · [Lista de lanzamiento](docs/launch-checklist.md) · [Estado de la hoja de ruta](docs/roadmap-status.md)
-- Conectar nubes: [AWS (CloudFormation)](docs/onboarding-aws.md) · [Azure y GCP](docs/onboarding-azure-gcp.md) · [Kubernetes/Helm](docs/kubernetes-helm.md) · [Políticas OPA](docs/policies.md)
-- Identidad: [SSO OIDC](docs/sso.md) · [Passkeys](docs/passkeys.md) · [Rotación del pepper](docs/pepper-rotation.md)
-- Seguridad externa: [Paquete de pentest](docs/pentest/scope.md) ([modelo de amenazas](docs/pentest/threat-model.md), [checklist](docs/pentest/checklist.md))
 
-## Estructura
+| | |
+|---|---|
+| **Diseño** | [Arquitectura](docs/architecture.md) · [ADRs](docs/adr/) · [Seguridad](docs/security.md) · [Estado de la hoja de ruta](docs/roadmap-status.md) |
+| **Operación** | [Runbook](docs/runbook.md) · [Despliegue](docs/deployment.md) · [Correo](docs/email.md) · [Lista de lanzamiento](docs/launch-checklist.md) · [Rotación del pepper](docs/pepper-rotation.md) |
+| **Integraciones** | [AWS](docs/onboarding-aws.md) · [Azure y GCP](docs/onboarding-azure-gcp.md) · [Kubernetes/Helm](docs/kubernetes-helm.md) · [Políticas OPA](docs/policies.md) · [SSO](docs/sso.md) · [Passkeys](docs/passkeys.md) |
+| **Seguridad externa** | [Alcance](docs/pentest/scope.md) · [Modelo de amenazas](docs/pentest/threat-model.md) · [Checklist](docs/pentest/checklist.md) |
+
+### Estructura del repositorio
 ```
-apps/api            FastAPI + Celery (paquete cloudcost: domain, iac, git, llm, collectors, services, routers)
-apps/web            Next.js 15 (BFF con cookie httpOnly)
-migrations          SQL (esquema, RLS, auditoría) + seed de desarrollo
-packages/policies   Políticas OPA (Rego) para planes de Terraform
-infrastructure      Docker, Terraform (rol de solo lectura, IaC de ejemplo), Kubernetes (Fase 2)
-scripts             migrate.sh, demo_flow.py, dev_token.py
-tests               unit/ e integration/
+apps/api              FastAPI + Celery — paquete cloudcost:
+                        domain/ (reglas, riesgo, precios)  collectors/ (aws, azure, gcp, kubernetes, demo, import)
+                        iac/ (Terraform, Helm, parches)    git/ (github, gitlab, local)    guardrail.py (OPA)
+                        auth/ (scrypt, TOTP, WebAuthn, OIDC)  services/  routers/  reports/  llm/
+apps/web              Next.js 15 — UI + BFF (cookies httpOnly), pruebas e2e con Playwright
+migrations            SQL versionado: esquema, RLS, auditoría, cuentas, SSO, passkeys + seed de desarrollo
+packages/policies     Políticas OPA/Rego y sus pruebas
+infrastructure        Terraform (roles de solo lectura AWS/Azure/GCP, IaC de ejemplo), CloudFormation, Docker, Caddy, alertas
+scripts               migrate, backup/restore/verify, demo_flow, dev_token
+tests                 unit/ e integration/
 ```
+
 > No se incluye licencia: añade la que corresponda a tu organización.
