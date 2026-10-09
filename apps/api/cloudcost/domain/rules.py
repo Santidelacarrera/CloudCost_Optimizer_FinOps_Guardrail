@@ -277,6 +277,21 @@ def rule_ec2_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     )
 
 
+def _volume_origin(tags: dict[str, str]) -> dict[str, str] | None:
+    """De dónde salió un volumen huérfano, según las etiquetas que dejan CloudFormation y el driver CSI de Kubernetes."""
+    stack = tags.get("aws:cloudformation:stack-name")
+    if stack:
+        return {"kind": "cloudformation", "ref": stack,
+                "text": f"Lo creó la pila de CloudFormation '{stack}': si la pila ya no se usa, elimínala en lugar de borrar volúmenes sueltos."}
+    pvc = tags.get("kubernetes.io/created-for/pvc/name")
+    if pvc:
+        ns = tags.get("kubernetes.io/created-for/pvc/namespace")
+        ref = f"{ns}/{pvc}" if ns else pvc
+        return {"kind": "kubernetes_pvc", "ref": ref,
+                "text": f"Corresponde al PersistentVolumeClaim '{ref}' de Kubernetes (probablemente ya eliminado): limpia el PV con kubectl."}
+    return None
+
+
 def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     if res.service not in VOLUME_SERVICES or res.attached is not False or res.state != "available" or is_protected(res.tags):
         return None
@@ -288,17 +303,19 @@ def rule_ebs_orphan(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     confidence = 0.80
     confidence += 0.10 if res.unattached_days >= 2 * cfg.orphan_volume_days else 0.0
     confidence += 0.03 if res.iac_address else 0.0
+    origin = _volume_origin(res.tags)
     return Finding(
         rule_id="ebs_orphan", action=ACTION_DELETE_VOLUME, resource=res, destructive=True,
         title=f"Eliminar volumen huérfano {res.name or res.resource_id}",
         summary=(f"Volumen {res.volume_type or ''} de {res.size_gb:g} GB sin attachment desde hace {res.unattached_days} días "
-                 f"(umbral {cfg.orphan_volume_days})."),
+                 f"(umbral {cfg.orphan_volume_days})." + (f" {origin['text']}" if origin else "")),
         current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
         estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
         params={"resource_type": tf_type_for(res), "resource_id": res.resource_id},
         evidence={"unattached_days": res.unattached_days, "size_gb": res.size_gb, "volume_type": res.volume_type,
                   "environment": res.environment, "threshold_days": cfg.orphan_volume_days,
-                  "cost_basis": _cost_basis(res)},
+                  "cost_basis": _cost_basis(res),
+                  **({"origin": origin["kind"], "origin_ref": origin["ref"]} if origin else {})},
         alternatives=[{"action": "SNAPSHOT_THEN_DELETE",
                        "description": "Tomar un snapshot final antes de eliminar, si los datos pudieran necesitarse."}],
     )
