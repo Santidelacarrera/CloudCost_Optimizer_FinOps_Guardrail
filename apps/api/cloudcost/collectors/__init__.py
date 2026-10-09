@@ -9,7 +9,7 @@ __all__ = ["CollectionResult", "Collector", "CostRecord", "get_collector"]
 
 
 def get_collector(account: dict[str, Any], *, secrets: SecretResolver, demo_enabled: bool,
-                  use_cost_explorer: bool = False, on_api_error=None) -> Collector:
+                  use_cost_explorer: bool = False, on_api_error=None, cost_options: dict[str, Any] | None = None) -> Collector:
     provider = account["provider"]
     if provider == "demo":
         if not demo_enabled:
@@ -20,7 +20,8 @@ def get_collector(account: dict[str, Any], *, secrets: SecretResolver, demo_enab
     if provider == "aws":
         from .aws import AwsCollector
 
-        return AwsCollector(account, secrets, use_cost_explorer=use_cost_explorer, on_api_error=on_api_error)
+        return AwsCollector(account, secrets, use_cost_explorer=use_cost_explorer, on_api_error=on_api_error,
+                            **(cost_options or {}))
     if provider == "import":
         from .file_import import ImportCollector
 
