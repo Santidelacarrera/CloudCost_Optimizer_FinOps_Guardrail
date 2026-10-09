@@ -51,3 +51,22 @@ def test_schemas_reject_foreign_references():
     with pytest.raises(ValueError):
         RepositoryIn(provider="github", full_name="a/b", token_ref="env:DATABASE_URL")
     assert RepositoryIn(provider="github", full_name="a/b", token_ref="env:CC_SECRET_TOKEN").token_ref == "env:CC_SECRET_TOKEN"
+
+
+def test_every_collector_resolves_secrets_scoped_to_the_account_organization():
+    """Azure, GCP y Kubernetes pasan el org_id de la cuenta: un secreto de otra organización no se puede referenciar."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2] / "apps/api/cloudcost"
+    offenders = []
+    for path in list((root / "collectors").glob("*.py")) + list((root / "services").glob("*.py")):
+        for m in re.finditer(r"secrets\.resolve\(([^\n]*)", path.read_text()):
+            if "organization_id" not in m.group(1):
+                offenders.append(f"{path.name}: {m.group(0)[:80]}")
+    assert not offenders, f"resolve() sin org_id: {offenders}"
+
+
+def test_explicit_null_references_are_accepted_by_the_schemas():
+    from cloudcost.schemas import CloudAccountIn, RepositoryIn
+    assert CloudAccountIn(provider="aws", account_ref="a1", display_name="x", external_id_ref=None).external_id_ref is None
+    assert RepositoryIn(provider="github", full_name="a/b", token_ref=None).token_ref is None

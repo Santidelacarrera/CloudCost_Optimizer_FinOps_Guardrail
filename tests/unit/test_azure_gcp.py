@@ -37,8 +37,8 @@ GIB = 2**30
 
 
 class FakeSecrets:
-    def resolve(self, ref):
-        return {"env:SECRET": "s3cr3t"}.get(ref)
+    def resolve(self, ref, org_id=None):
+        return {"env:CC_SECRET_SECRET": "s3cr3t"}.get(ref)
 
 
 class Fake:
@@ -205,7 +205,7 @@ def test_azure_missing_secret_is_a_permission_error():
 
 def test_invalid_credentials_config_is_not_retryable():
     class Secrets:
-        def resolve(self, ref):
+        def resolve(self, ref, org_id=None):
             return "no es un json"
 
     with pytest.raises(PermissionError):
@@ -405,14 +405,14 @@ def test_gcp_token_uses_signed_jwt_assertion():
 
 # ------------------------------------------------------------------------------------- alta de cuentas y fábrica
 def test_account_validation_by_provider():
-    ok_azure = dict(provider="azure", account_ref=SUB, display_name="Prod", tenant_id=SUB, client_id=SUB, credentials_ref="env:AZ_SECRET")
+    ok_azure = dict(provider="azure", account_ref=SUB, display_name="Prod", tenant_id=SUB, client_id=SUB, credentials_ref="env:CC_SECRET_AZ")
     acct = CloudAccountIn(**ok_azure)
-    assert acct.regions == ["all"] and acct.provider_config == {"tenant_id": SUB, "client_id": SUB, "credentials_ref": "env:AZ_SECRET"}
+    assert acct.regions == ["all"] and acct.provider_config == {"tenant_id": SUB, "client_id": SUB, "credentials_ref": "env:CC_SECRET_AZ"}
     for patch in ({"account_ref": "mi-suscripcion"}, {"tenant_id": None}, {"client_id": "nope"}, {"credentials_ref": None},
                   {"credentials_ref": "hunter2-el-valor-directo"}):
         with pytest.raises(ValueError):
             CloudAccountIn(**{**ok_azure, **patch})
-    ok_gcp = dict(provider="gcp", account_ref=PROJECT, display_name="Datos", credentials_ref="aws-sm:gcp-ro-key")
+    ok_gcp = dict(provider="gcp", account_ref=PROJECT, display_name="Datos", credentials_ref="aws-sm:cloudcost/org/gcp-ro-key")
     assert CloudAccountIn(**ok_gcp).regions == ["all"]
     assert CloudAccountIn(**{**ok_gcp, "regions": ["us-central1", "europe-west1"]}).regions == ["us-central1", "europe-west1"]
     for patch in ({"account_ref": "123456789012"}, {"credentials_ref": None}, {"regions": ["Bad Region"]}):

@@ -18,12 +18,12 @@ consultas de lectura (`GET /api/v1/query`).
 curl -X POST $API/api/v1/cloud-accounts -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{
   "provider": "kubernetes", "account_ref": "prod-eks", "display_name": "EKS producción",
   "prometheus_url": "https://prometheus.example.com",
-  "credentials_ref": "env:PROM_TOKEN",
+  "credentials_ref": "env:CC_SECRET_PROM_TOKEN",
   "exclude_namespaces": ["kube-system", "monitoring"],
   "cpu_hour_usd": 0.0316, "mem_gib_hour_usd": 0.0042}'
 ```
 - `prometheus_url`: **https**, o `http` solo dentro del clúster (`*.svc`, `*.svc.cluster.local`, `localhost`). Se rechazan credenciales en la URL y direcciones de metadatos de la nube (`169.254.x.x`, `metadata.google.internal`).
-- `credentials_ref`: token Bearer opcional (referencia `env:`/`aws-sm:`, nunca el valor). Sin él no se envía cabecera `Authorization`.
+- `credentials_ref`: token Bearer opcional (referencia `env:CC_SECRET_*` o `aws-sm:cloudcost/<org_id>/…`, nunca el valor). Sin él no se envía cabecera `Authorization`.
 - `namespaces` / `exclude_namespaces`: por defecto se excluyen `kube-system`, `kube-public` y `kube-node-lease`.
 - `cpu_hour_usd` / `mem_gib_hour_usd`: lo que te cuesta un vCPU-hora y un GiB-hora (por defecto ≈ un nodo de propósito general). El ahorro es **de lo reservado**, no la factura del nodo: si el clúster hace *bin packing* no se libera dinero hasta que los nodos se reduzcan.
 - El entorno (producción/staging/…) se deduce del nombre del namespace (`shop-prod`, `team-dev`…) o de `environment`; lo desconocido se trata como producción.

@@ -103,7 +103,7 @@ class FakeSession:
 
 
 class _Secrets:
-    def resolve(self, ref):
+    def resolve(self, ref, org_id=None):
         return None
 
 

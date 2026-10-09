@@ -20,7 +20,7 @@ Nada de escritura, nada de `*` en las acciones. La confianza solo admite **un** 
 
 1. En CloudCost (rol ADMIN): `POST /api/v1/onboarding/aws/cloudformation`. Devuelve `external_id` (se muestra **una sola vez**,
    no se guarda), `trusted_principal_arn` y `quick_create_url`.
-2. Guarda el `external_id` en tu gestor de secretos (`env:NOMBRE` o `aws-sm:id`). La base de datos solo guarda la referencia.
+2. Guarda el `external_id` en tu gestor de secretos (`env:CC_SECRET_NOMBRE` o `aws-sm:cloudcost/<org_id>/nombre`). La base de datos solo guarda la referencia.
 3. Abre `quick_create_url`: la consola de AWS muestra la pila con todo precargado. Revisa la plantilla y pulsa **Crear pila**
    (si cambias `RoleName`, AWS pedirá aceptar `CAPABILITY_NAMED_IAM`).
 4. Cuando la pila termine, copia la salida **RoleArn** y registra la cuenta:
