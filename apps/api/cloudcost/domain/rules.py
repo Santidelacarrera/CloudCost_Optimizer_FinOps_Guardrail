@@ -15,6 +15,7 @@ from .pricing import (
     InstanceSpec,
     instance_monthly_cost,
     instance_spec,
+    rds_monthly_cost,
     smaller_types,
     snapshot_monthly_cost,
     volume_monthly_cost,
@@ -24,6 +25,7 @@ ACTION_RESIZE = "RESIZE_INSTANCE"
 ACTION_REMOVE = "REMOVE_RESOURCE"
 ACTION_DELETE_VOLUME = "DELETE_VOLUME"
 ACTION_DELETE_SNAPSHOT = "DELETE_SNAPSHOT"
+ACTION_DELETE_DB = "DELETE_DB_INSTANCE"
 
 
 @dataclass(frozen=True)
@@ -44,6 +46,10 @@ class RuleConfig:
     # almacenamiento
     orphan_volume_days: int = 14
     old_snapshot_days: int = 90
+    # bases de datos RDS abandonadas: sin conexiones y CPU en reposo durante toda la ventana observada
+    rds_idle_connections: float = 0.5      # conexiones medias (por debajo = nadie se conecta)
+    rds_idle_cpu: float = 5.0
+    rds_min_observation_days: int = 14
     min_monthly_savings: float = 5.0
 
     @classmethod
@@ -98,6 +104,8 @@ def _current_cost(res: NormalizedResource) -> float:
         return volume_monthly_cost(res.volume_type, res.size_gb)
     if res.service == "ebs_snapshot":
         return snapshot_monthly_cost(res.size_gb)
+    if res.service == "rds":
+        return rds_monthly_cost(res.instance_type, res.size_gb, bool(res.attributes.get("multi_az")))
     return 0.0
 
 
@@ -271,8 +279,49 @@ def rule_snapshot_old(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
     )
 
 
+def rule_rds_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
+    """Base de datos RDS abandonada: sin conexiones ni CPU durante toda la ventana. Siempre destructiva; el riesgo lo fija risk.py (ALTO)."""
+    if res.service != "rds" or res.state != "available" or is_protected(res.tags):
+        return None
+    conns = res.attributes.get("connections_avg")
+    if conns is None or res.cpu_avg is None or res.observation_days < cfg.rds_min_observation_days:
+        return None
+    peak = res.attributes.get("connections_max")
+    if conns > cfg.rds_idle_connections or res.cpu_avg > cfg.rds_idle_cpu or (peak is not None and peak > 2):
+        return None
+    cost = _current_cost(res)
+    if cost < cfg.min_monthly_savings:
+        return None
+    confidence = 0.78
+    confidence += 0.10 if res.observation_days >= 30 else 0.0
+    confidence += 0.04 if peak is not None else 0.0
+    confidence += 0.03 if res.iac_address else 0.0
+    confidence -= 0.10 if res.attributes.get("deletion_protection") else 0.0      # alguien lo protegió a propósito: menos seguro
+    confidence -= 0.05 if res.attributes.get("read_replicas") else 0.0
+    backup = res.attributes.get("backup_retention_days")
+    return Finding(
+        rule_id="rds_idle", action=ACTION_DELETE_DB, resource=res, destructive=True,
+        title=f"Eliminar base de datos abandonada {res.name or res.resource_id}",
+        summary=(f"{res.instance_type or 'RDS'} ({res.attributes.get('engine', 'motor desconocido')}) sin conexiones: media {conns:g}"
+                 + (f", máximo {peak:g}" if peak is not None else "")
+                 + f", CPU media {res.cpu_avg:.1f}% durante {res.observation_days} días."
+                 + (" Tiene protección contra borrado: habrá que desactivarla antes de aplicar el cambio." if res.attributes.get("deletion_protection") else "")),
+        current_monthly_cost=round(cost, 2), projected_monthly_cost=0.0,
+        estimated_monthly_savings=round(cost, 2), confidence=_clamp(confidence),
+        params={"resource_type": "aws_db_instance", "resource_id": res.resource_id},
+        evidence={"connections_avg": conns, "connections_max": peak, "cpu_avg": res.cpu_avg, "observation_days": res.observation_days,
+                  "environment": res.environment, "engine": res.attributes.get("engine"), "storage_gb": res.size_gb,
+                  "multi_az": bool(res.attributes.get("multi_az")), "backup_retention_days": backup,
+                  "deletion_protection": bool(res.attributes.get("deletion_protection"))},
+        alternatives=[
+            {"action": "SNAPSHOT_THEN_DELETE", "description": "Tomar un snapshot final antes de eliminar (en Terraform: skip_final_snapshot = false y final_snapshot_identifier)."},
+            {"action": "STOP_TEMPORARILY", "description": "Detenerla: no cobra cómputo, pero AWS la reinicia sola a los 7 días y el almacenamiento se sigue cobrando."},
+        ],
+    )
+
+
 Rule = Callable[[NormalizedResource, RuleConfig], "Finding | None"]
-RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old]
+RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old, rule_rds_idle]
 
 
 def evaluate_resource(res: NormalizedResource, cfg: RuleConfig) -> list[Finding]:

@@ -16,7 +16,7 @@ _HEREDOC_RE = re.compile(r'<<-?\s*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\r?\n')
 _NAME_TAG_RE = re.compile(r'\bName\s*=\s*"([^"\n]+)"')
 _META_RE = re.compile(r'^[ \t]*(count|for_each)[ \t]*=', re.MULTILINE)
 
-SERVICE_TO_TF_TYPE = {"ec2": "aws_instance", "ebs": "aws_ebs_volume", "ebs_snapshot": "aws_ebs_snapshot"}
+SERVICE_TO_TF_TYPE = {"ec2": "aws_instance", "ebs": "aws_ebs_volume", "ebs_snapshot": "aws_ebs_snapshot", "rds": "aws_db_instance"}
 
 
 class HclSyntaxError(ValueError):
