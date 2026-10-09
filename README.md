@@ -225,20 +225,18 @@ También puedes **importar un CSV** (instancias EC2, volúmenes EBS o snapshots 
 
 ## Seguridad
 
-Postura resumida (el detalle y las variables están en [docs/security.md](docs/security.md)):
+El diseño de seguridad asume un entorno hostil y opera bajo el principio de **Fail-Closed**. Todo el sistema está diseñado para proteger la infraestructura del cliente, aislar a los tenants y prevenir la escalada de privilegios.
 
-- **Contraseñas:** scrypt sobre HMAC con *pepper* del servidor fuera de la base; política ≥ 12 caracteres con rechazo de contraseñas comunes; límite de hashes simultáneos.
-- **Sin enumeración de cuentas:** registro, login y recuperación responden igual exista o no el correo.
-- **Bloqueo progresivo** por cuenta e IP, registrado en la base (válido con varias réplicas).
-- **Sesiones** opacas de 256 bits (solo su hash en la base), caducidad absoluta e inactividad, revocables; passkeys y TOTP con anti-reutilización.
-- **Web:** cookies `httpOnly` + `SameSite=Strict`, comprobación de origen en el BFF, CSP con *nonce*, cabeceras de seguridad.
-- **Secretos:** por referencia y confinados por organización; una referencia escrita por un usuario no puede leer variables del servidor ni secretos de otro tenant.
-- **Webhooks** autenticados (HMAC SHA-256 en GitHub, token en GitLab) con comparación en tiempo constante.
-- **Cadena de suministro:** Trivy sobre el repositorio en cada PR y sobre las imágenes al publicar, Checkov (informativo) y `terraform validate` de los módulos de solo lectura.
+**Aspectos destacados:**
+- **Solo lectura hacia la nube:** Roles IAM/RBAC sin permisos de escritura, asegurados mediante `ExternalId`.
+- **Criptografía robusta:** Contraseñas en *scrypt*, protección contra ataques *Mix-up* en SSO/OIDC, y soporte nativo para **Passkeys (WebAuthn)**.
+- **Aislamiento Multi-Tenant:** Implementado mediante Row Level Security (`RLS FORCE`) en la base de datos y resolución de secretos por referencia.
+- **Auditoría inmutable:** Cadena SHA-256 verificable (append-only) protegida por triggers en el motor de base de datos.
+- **Prueba de penetración:** El repositorio incluye el paquete para auditarlo (alcance, modelo STRIDE y checklist con cobertura automática).
 
-**Prueba de penetración externa:** *no realizada todavía.* El repositorio incluye el paquete para contratarla —[alcance y reglas de compromiso](docs/pentest/scope.md), [modelo de amenazas STRIDE](docs/pentest/threat-model.md) y [checklist con cobertura automática](docs/pentest/checklist.md)— y pruebas permanentes que ya verifican en cada PR el aislamiento entre organizaciones, que **toda ruta** exige credenciales salvo una lista blanca explícita y la matriz de roles. Un fallo real de ese modelo (referencias de secreto que podían apuntar a variables del servidor) ya se encontró y corrigió al prepararlo.
+> 🔒 **Para un análisis profundo del modelo de amenazas, criptografía, autenticación y mitigaciones, lee nuestro [Whitepaper de Seguridad y Modelo de Amenazas](docs/security.md).**
 
-Si encuentras una vulnerabilidad, no publiques los detalles en una incidencia abierta: avisa a los mantenedores por un canal privado.
+*Si encuentras una vulnerabilidad, no publiques los detalles en una incidencia abierta: avisa a los mantenedores por un canal privado.*
 
 ---
 
