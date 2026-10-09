@@ -320,8 +320,9 @@ def login(settings: Settings, *, email: str, password: str, ip: str | None, ua: 
     with auth_tx() as conn:
         locked = _lock_remaining(conn, "login", eh)
         ip_blocked = bool(ip) and _recent(conn, "login", ip=ip, seconds=IP_WINDOW, only_failures=True) >= IP_FAIL_LIMIT
-        acc = conn.execute("select id, organization_id, password_hash, email_verified_at, disabled_at, mfa_enabled_at from accounts where email = %s",
-                           (email,)).fetchone()
+        acc = conn.execute("select id, organization_id, password_hash, email_verified_at, disabled_at, mfa_enabled_at, "
+                           "(select count(*)::int from webauthn_credentials w where w.account_id = accounts.id) as passkeys "
+                           "from accounts where email = %s", (email,)).fetchone()
     if locked or ip_blocked:
         raise _locked_error(locked or 60)
     ring = _ring(settings)
@@ -345,7 +346,7 @@ def login(settings: Settings, *, email: str, password: str, ip: str | None, ua: 
         else:
             if new_hash:
                 conn.execute("update accounts set password_hash = %s where id = %s", (new_hash, str(acc["id"])))
-            if acc["mfa_enabled_at"] is not None:
+            if acc["mfa_enabled_at"] is not None or acc["passkeys"]:
                 tok = _new_session(conn, settings, acc["id"], acc["organization_id"], "mfa_pending", ip, ua)
                 out = {"status": "mfa_required", "pending_token": tok, "expires_in": MFA_PENDING_SECONDS}
             else:
@@ -355,12 +356,13 @@ def login(settings: Settings, *, email: str, password: str, ip: str | None, ua: 
     return out
 
 
-def _finish_login(conn: Connection, settings: Settings, acc: dict, eh: str, ip: str | None, ua: str | None, *, mfa: bool) -> dict:
+def _finish_login(conn: Connection, settings: Settings, acc: dict, eh: str, ip: str | None, ua: str | None, *, mfa: bool,
+                  method: str | None = None) -> dict:
     tok = _new_session(conn, settings, acc["id"], acc["organization_id"], "active", ip, ua)
     _record(conn, "login", eh, ip, True)                          # un éxito completo reinicia el contador de fallos
     conn.execute("update accounts set last_login_at = now() where id = %s", (str(acc["id"]),))
     audit.record(conn, acc["organization_id"], audit.LOGIN_SUCCEEDED, actor=_actor(acc["id"]), entity_type="account", entity_id=acc["id"],
-                 payload={"mfa": mfa, "ip": ip})
+                 payload={"mfa": mfa, "ip": ip, **({"method": method} if method else {})})
     return {"status": "ok", "token": tok, "expires_in": settings.auth_session_hours * 3600}
 
 
@@ -394,11 +396,12 @@ def mfa_verify(settings: Settings, *, pending_token: str, code: str, ip: str | N
     out: dict = {}
     with auth_tx() as conn:
         s = conn.execute(
-            """select s.id as session_id, a.id, a.organization_id, a.email, a.mfa_secret_enc, a.mfa_last_step, a.mfa_enabled_at, a.disabled_at
+            """select s.id as session_id, a.id, a.organization_id, a.email, a.mfa_secret_enc, a.mfa_last_step, a.mfa_enabled_at, a.disabled_at,
+                      (select count(*)::int from webauthn_credentials w where w.account_id = a.id) as passkeys
                  from auth_sessions s join accounts a on a.id = s.account_id
                 where s.token_hash = %s and s.kind = 'mfa_pending' and s.revoked_at is null and s.expires_at > now() for update of s""",
             (crypto.hash_token(pending_token),)).fetchone()
-        if not s or s["disabled_at"] is not None or s["mfa_enabled_at"] is None:
+        if not s or s["disabled_at"] is not None or (s["mfa_enabled_at"] is None and not s["passkeys"]):
             raise AuthError(401, "La verificación venció. Inicia sesión de nuevo.", "mfa_expired")
         conn.execute("select set_config('app.current_org', %s, true)", (str(s["organization_id"]),))      # para poder auditar
         key = crypto.hash_email(str(s["id"]), pepper)
@@ -442,7 +445,8 @@ def me(p) -> dict:
         row = conn.execute(
             """select a.id, a.email, a.full_name, a.role, a.email_verified_at, a.mfa_enabled_at, a.password_changed_at, a.last_login_at,
                       a.created_at, o.name as organization,
-                      (select count(*)::int from auth_recovery_codes c where c.account_id = a.id and c.used_at is null) as recovery_codes_left
+                      (select count(*)::int from auth_recovery_codes c where c.account_id = a.id and c.used_at is null) as recovery_codes_left,
+                      (select count(*)::int from webauthn_credentials w where w.account_id = a.id) as passkeys
                  from accounts a join organizations o on o.id = a.organization_id where a.id = %s and a.organization_id = %s""",
             (p.account_id, str(p.org_id))).fetchone()
     if not row:
@@ -451,7 +455,8 @@ def me(p) -> dict:
             "mfa_enabled": row["mfa_enabled_at"] is not None, "recovery_codes_left": row["recovery_codes_left"],
             "email_verified": row["email_verified_at"] is not None, "password_changed_at": row["password_changed_at"],
             "last_login_at": row["last_login_at"], "created_at": row["created_at"],
-            "mfa_recommended": row["role"] in ("ADMIN", "FINOPS", "SRE") and row["mfa_enabled_at"] is None}
+            "passkeys": row["passkeys"],
+            "mfa_recommended": row["role"] in ("ADMIN", "FINOPS", "SRE") and row["mfa_enabled_at"] is None and not row["passkeys"]}
 
 
 def list_sessions(p) -> list[dict]:
@@ -658,10 +663,11 @@ def operator_reset_mfa(settings: Settings, email: str, reason: str, outbox: Outb
         conn.execute("select set_config('app.current_org', %s, true)", (str(acc["organization_id"]),))
         conn.execute("update accounts set mfa_secret_enc = null, mfa_enabled_at = null, mfa_last_step = null where id = %s", (str(acc["id"]),))
         conn.execute("delete from auth_recovery_codes where account_id = %s", (str(acc["id"]),))
+        conn.execute("delete from webauthn_credentials where account_id = %s", (str(acc["id"]),))      # sin esto, una llave perdida seguiría exigiéndose
         closed = _revoke_sessions(conn, acc["id"], "mfa_reset_by_operator")
         audit.record(conn, acc["organization_id"], audit.MFA_DISABLED, actor=audit.Actor("system", "operator-cli"), entity_type="account",
                      entity_id=acc["id"], payload={"via": "operator", "reason": reason[:300], "had_mfa": acc["mfa_enabled_at"] is not None, "sessions_closed": closed})
-        outbox.append(mailer.security_notice_mail(acc["email"], "Un administrador del servicio quitó la verificación en dos pasos de tu cuenta tras verificar tu identidad."))
+        outbox.append(mailer.security_notice_mail(acc["email"], "Un administrador del servicio quitó la verificación en dos pasos (y tus llaves de acceso) de tu cuenta tras verificar tu identidad."))
     return True
 
 
