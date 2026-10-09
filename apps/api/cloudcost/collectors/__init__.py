@@ -22,8 +22,20 @@ def get_collector(account: dict[str, Any], *, secrets: SecretResolver, demo_enab
 
         return AwsCollector(account, secrets, use_cost_explorer=use_cost_explorer, on_api_error=on_api_error,
                             **(cost_options or {}))
+    if provider == "azure":
+        from .azure import AzureCollector
+
+        return AzureCollector(account, secrets, on_api_error=on_api_error)
+    if provider == "gcp":
+        from .gcp import GcpCollector
+
+        return GcpCollector(account, secrets, on_api_error=on_api_error)
+    if provider == "kubernetes":
+        from .kubernetes import KubernetesCollector
+
+        return KubernetesCollector(account, secrets, on_api_error=on_api_error)
     if provider == "import":
         from .file_import import ImportCollector
 
         return ImportCollector(account)
-    raise NotImplementedError(f"Conector '{provider}' aún no disponible (roadmap: Azure en Fase 2, GCP en Fase 4)")
+    raise NotImplementedError(f"Conector '{provider}' no disponible")

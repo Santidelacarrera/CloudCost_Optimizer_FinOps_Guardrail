@@ -5,7 +5,16 @@ import difflib
 import re
 from dataclasses import dataclass, field
 
-from ..domain.rules import ACTION_DELETE_DB, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE
+from ..domain.models import RESIZE_ATTR
+from ..domain.rules import (
+    ACTION_DELETE_DB,
+    ACTION_DELETE_SNAPSHOT,
+    ACTION_DELETE_VOLUME,
+    ACTION_REMOVE,
+    ACTION_RESIZE,
+    ACTION_RIGHTSIZE_WORKLOAD,
+)
+from .helm import HelmError, HelmTarget, build_values_patch
 from .terraform import HclSyntaxError, IacIndex, TfBlock, parse_resources
 
 
@@ -53,20 +62,26 @@ def _check_resulting_hcl(old: str, new: str, path: str) -> dict:
     return {"check": "hcl_syntax", "passed": True, "detail": detail + " + python-hcl2"}
 
 
+_TARGET_RE = {"instance_type": r"[a-z0-9]+\.[a-z0-9]+", "size": r"Standard_[A-Za-z0-9_]{2,30}", "machine_type": r"[a-z0-9]+-[a-z0-9-]{2,30}"}
+
+
 def _resize(text: str, block: TfBlock, params: dict) -> tuple[str, str]:
     if block.multi_instance:
         raise PatchError("multi_instance", f"{block.address} usa count/for_each: el cambio afectaría a varias instancias; aplícalo manualmente.")
-    lit = block.attr_literal("instance_type")
+    attr = RESIZE_ATTR.get(block.type)
+    if attr is None:
+        raise PatchError("unsupported_action", f"No sé cambiar el tamaño de recursos {block.type}.")
+    lit = block.attr_literal(attr)
     if not lit:
-        raise PatchError("not_literal", f"instance_type de {block.address} no es un literal (variable o expresión); no se puede parchear automáticamente.")
+        raise PatchError("not_literal", f"{attr} de {block.address} no es un literal (variable o expresión); no se puede parchear automáticamente.")
     current, a, b = lit
     expected = params.get("current_instance_type")
     if expected and current != expected:
         raise PatchError("drift", f"Deriva detectada: el IaC declara {current} pero la recomendación se calculó para {expected}.")
     target = params.get("target_instance_type")
-    if not target or not re.fullmatch(r"[a-z0-9]+\.[a-z0-9]+", target):
+    if not target or not re.fullmatch(_TARGET_RE[attr], target):
         raise PatchError("invalid_params", "Tipo de instancia destino inválido.")
-    return text[:a] + target + text[b:], f"{block.address}: instance_type {current} → {target}"
+    return text[:a] + target + text[b:], f"{block.address}: {attr} {current} → {target}"
 
 
 def _remove(text: str, block: TfBlock, index: IacIndex) -> tuple[str, str]:
@@ -86,8 +101,20 @@ def _remove(text: str, block: TfBlock, index: IacIndex) -> tuple[str, str]:
     return text[:start] + text[end:], f"{block.address}: bloque eliminado"
 
 
-def build_patch(*, action: str, params: dict, block: TfBlock, index: IacIndex) -> PatchResult:
+def build_patch(*, action: str, params: dict, block: "TfBlock | HelmTarget", index: IacIndex) -> PatchResult:
     text = index.files[block.path]
+    if action == ACTION_RIGHTSIZE_WORKLOAD:
+        if not isinstance(block, HelmTarget):
+            raise PatchError("unsupported_action", "Los workloads de Kubernetes solo se parchean en values.yaml de Helm.")
+        try:
+            new_text, summary, validations = build_values_patch(text, block, params)
+        except HelmError as exc:
+            raise PatchError(exc.code, exc.message) from exc
+        if new_text == text:
+            raise PatchError("no_change", "El parche no produce cambios.")
+        return PatchResult(block.path, new_text, unified_diff(block.path, text, new_text), summary, validations)
+    if isinstance(block, HelmTarget):
+        raise PatchError("unsupported_action", f"Acción '{action}' no aplica a un values.yaml.")
     if action == ACTION_RESIZE:
         new_text, summary = _resize(text, block, params)
     elif action in (ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_DB):

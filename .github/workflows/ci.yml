@@ -169,7 +169,7 @@ jobs:
       - run: opa test packages/policies -v
       - uses: hashicorp/setup-terraform@v3
       - run: |
-          for d in infrastructure/terraform/aws-readonly-role infrastructure/terraform/example-iac; do
+          for d in infrastructure/terraform/aws-readonly-role infrastructure/terraform/azure-readonly-role infrastructure/terraform/gcp-readonly-role infrastructure/terraform/example-iac; do
             (cd $d && terraform init -backend=false -input=false && terraform validate)
           done
 
