@@ -30,19 +30,21 @@ PUBLIC = {
     ("GET", "/api/v1/auth/config"), ("POST", "/api/v1/auth/signup"), ("POST", "/api/v1/auth/verify-email"),
     ("POST", "/api/v1/auth/resend-verification"), ("POST", "/api/v1/auth/login"), ("POST", "/api/v1/auth/mfa/verify"),
     ("POST", "/api/v1/auth/forgot-password"), ("POST", "/api/v1/auth/reset-password"),
-    ("POST", "/api/v1/webhooks/github/{org_id}"),       # se autentica con HMAC (ver test_public_routes_...)
+    ("POST", "/api/v1/webhooks/github/{org_id}"),       # se autentican con HMAC / token compartido (ver test_public_routes_...)
+    ("POST", "/api/v1/webhooks/gitlab/{org_id}"),
     ("POST", "/api/v1/dev/token"),                       # solo existe con AUTH_MODE=dev fuera de producción
     # Presentes cuando se integran SSO OIDC y passkeys; son parte del inicio de sesión y se autentican con su propio protocolo.
     ("GET", "/api/v1/auth/sso/start"), ("POST", "/api/v1/auth/sso/callback"),
     ("POST", "/api/v1/auth/passkey/login/options"), ("POST", "/api/v1/auth/passkey/login"),
     ("POST", "/api/v1/auth/mfa/passkey/options"), ("POST", "/api/v1/auth/mfa/passkey"),
 }
+WEBHOOKS = {("POST", "/api/v1/webhooks/github/{org_id}"), ("POST", "/api/v1/webhooks/gitlab/{org_id}")}
 WEBHOOK = ("POST", "/api/v1/webhooks/github/{org_id}")
 
 # Lo que SÍ puede hacer el rol de solo lectura: consultar y gestionar su propia cuenta. Todo lo demás debe darle 403.
 VIEWER_ALLOWED = {
     ("GET", "/api/v1/cloud-accounts"), ("GET", "/api/v1/repositories"), ("GET", "/api/v1/dashboard/summary"),
-    ("GET", "/api/v1/imports/template"), ("GET", "/api/v1/recommendations"), ("GET", "/api/v1/recommendations/{rec_id}"),
+    ("GET", "/api/v1/imports/template"), ("GET", "/api/v1/reports/executive"), ("GET", "/api/v1/recommendations"), ("GET", "/api/v1/recommendations/{rec_id}"),
     ("GET", "/api/v1/scans"), ("GET", "/api/v1/scans/{scan_id}"),
     ("GET", "/api/v1/auth/me"), ("POST", "/api/v1/auth/change-password"), ("GET", "/api/v1/auth/sessions"),
     ("POST", "/api/v1/auth/sessions/revoke-others"), ("DELETE", "/api/v1/auth/sessions/{session_id}"),
@@ -149,9 +151,9 @@ def test_public_routes_need_no_credentials_and_never_fail_with_5xx(client, route
         if (method, template) not in PUBLIC:
             continue
         res = _call(client, method, template)
-        if res.status_code >= 500 and (method, template) != WEBHOOK:
+        if res.status_code >= 500 and (method, template) not in WEBHOOKS:
             problems.append((method, template, res.status_code))
-        if (method, template) == WEBHOOK:
+        if (method, template) in WEBHOOKS:
             # sin firma HMAC: rechazado (401) o desactivado (503), nunca procesado
             assert res.status_code in (401, 503), res.text
         elif res.status_code in (401, 403):
@@ -162,6 +164,9 @@ def test_public_routes_need_no_credentials_and_never_fail_with_5xx(client, route
 def test_webhook_rejects_wrong_signature(client):
     res = client.post(f"/api/v1/webhooks/github/{PLACEHOLDER}", content=b"{}",
                       headers={"x-hub-signature-256": "sha256=" + "0" * 64, "x-github-event": "pull_request"})
+    assert res.status_code in (401, 503)
+    res = client.post(f"/api/v1/webhooks/gitlab/{PLACEHOLDER}", content=b"{}",
+                      headers={"x-gitlab-token": "no-es-el-secreto", "x-gitlab-event": "Merge Request Hook"})
     assert res.status_code in (401, 503)
 
 
