@@ -260,7 +260,7 @@ def build() -> str:
     a("")
     for line in (
         "Demuestra que las cifras se separan, que cada una dice de dónde sale y que el sistema distingue «el cambio funcionó» de «no se aplicó», «otra cosa se movió» y «nadie lo midió».",
-        "No demuestra ahorros reales: los datos son inventados. El primer informe con una cuenta real debe generarse con `python -m cloudcost.cli aws-lab` y, pasado el despliegue, con la verificación de ahorro del producto.",
+        "No demuestra ahorros reales: los datos son inventados. El primer informe con una cuenta real debe generarse con `python scripts/aws_lab.py` y, pasado el despliegue, con la verificación de ahorro del producto.",
         "Ningún método basado en facturación puede probar causalidad. Reserved Instances, Savings Plans, créditos, cambios de precio y de carga pueden mover el coste por su cuenta; los controles de este informe reducen ese riesgo, no lo eliminan.",
         "El ajuste por uso supone que el precio por hora activa no cambió por otros motivos; si cambió, aparece como desviación o como «mayor de lo que explica el cambio».",
         "Con menos de 7 días completos posteriores al despliegue (descontando transición y retraso de facturación) el producto se niega a calcular en lugar de dar una cifra frágil.",

@@ -7,13 +7,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import db
-from .auth import mailer
-from .config import get_settings
-from .services import accounts
-
 
 def reset_mfa(args: argparse.Namespace) -> int:
+    from . import db
+    from .auth import mailer
+    from .config import get_settings
+    from .services import accounts
+
     settings = get_settings()
     outbox: list[mailer.Mail] = []
     db.init_pool()

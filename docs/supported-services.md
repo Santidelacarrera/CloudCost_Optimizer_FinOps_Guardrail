@@ -70,7 +70,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 
 ## Qué falta para subir de nivel
 
-1. **AWS L2 → L3**: ejecutar `python -m cloudcost.cli aws-lab` contra una cuenta de laboratorio y adjuntar `report.md`/`snapshot.json`.
+1. **AWS L2 → L3**: ejecutar `python scripts/aws_lab.py` contra una cuenta de laboratorio y adjuntar `report.md`/`snapshot.json`.
 2. **RDS**: inventario real (`DescribeDBInstances` + `AWS/RDS` en CloudWatch). Hoy no existe.
 3. **Azure/GCP/Kubernetes**: cuentas y clústeres de laboratorio, como en AWS.
 4. **Cuentas múltiples**: descubrimiento de cuentas vinculadas y un rol por cuenta.

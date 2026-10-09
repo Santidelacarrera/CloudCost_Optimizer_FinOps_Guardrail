@@ -12,13 +12,25 @@ Este documento y la herramienta `aws-lab` existen para hacerlo en una tarde, con
    (`sts:GetCallerIdentity` no requiere permiso.) Una prueba comprueba que el rol y la lista de operaciones permitidas del código coinciden.
 
 ## 2. Ejecutar
+Requisitos: Python ≥ 3.11 y `pip install boto3` (o `pip install -r requirements.txt`). El paquete `cloudcost` vive en `apps/api` y **no se instala**: usa el lanzador `scripts/aws_lab.py` desde la raíz del repo (o `cd apps/api` y `python -m cloudcost.cli aws-lab …`).
+
+Credenciales: las de siempre de boto3 (`aws configure`, `AWS_PROFILE`, variables `AWS_ACCESS_KEY_ID`…). Con `--role-arn` asume el rol de solo lectura.
+
+macOS/Linux:
 ```bash
 export CC_SECRET_LAB_EXT='<ExternalId del rol>'          # el valor no se guarda ni se registra
-python -m cloudcost.cli aws-lab \
+python scripts/aws_lab.py \
   --account-ref 123456789012 --regions us-east-1,eu-west-1 \
   --role-arn arn:aws:iam::123456789012:role/CloudCostOptimizerReadOnly --external-id-env CC_SECRET_LAB_EXT \
   --months 6 --ce-budget 40 --out-dir lab-out
 # datos para compartir: añade  --anonymize --scale 0.3
+```
+Windows (PowerShell):
+```powershell
+$env:CC_SECRET_LAB_EXT = '<ExternalId del rol>'
+python scripts\aws_lab.py --account-ref 123456789012 --regions us-east-1 `
+  --role-arn arn:aws:iam::123456789012:role/CloudCostOptimizerReadOnly --external-id-env CC_SECRET_LAB_EXT `
+  --months 6 --ce-budget 40 --out-dir lab-out
 ```
 No usa la base de datos ni escribe en AWS. Coste: cada solicitud a Cost Explorer vale USD 0,01 (un escaneo típico: 4-6; tope `--ce-budget`).
 
@@ -26,7 +38,7 @@ Salida en `lab-out/`: `snapshot.json` (lo recogido), `report.md` (informe) y `re
 
 ## 3. Reproducir sin acceso a la cuenta
 ```bash
-python -m cloudcost.cli aws-lab --from-snapshot lab-out/snapshot.json --out-dir otro
+python scripts/aws_lab.py --from-snapshot lab-out/snapshot.json --out-dir otro
 diff lab-out/report.md otro/report.md && diff lab-out/report.sha256 otro/report.sha256   # sin diferencias
 ```
 El informe depende solo de la instantánea (nada de reloj ni de red): misma instantánea, mismo texto, byte a byte.
