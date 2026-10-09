@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     gemini_api_key: SecretStr | None = None
     llm_timeout_seconds: float = 30.0
 
+    # --- onboarding de cuentas AWS con CloudFormation (un clic)
+    aws_platform_principal_arn: str | None = None        # ARN del rol de CloudCost que asumirá el rol del cliente (el que va en la plantilla)
+    aws_onboarding_template_url: str | None = None       # URL https de S3 donde está publicada infrastructure/cloudformation/readonly-role.yaml
+    aws_onboarding_stack_region: str = "us-east-1"
+
     # --- nube
     aws_cost_explorer_resources: bool = True          # costo real por recurso (si falla, se usa la tabla de precios)
     aws_cost_tag_key: str | None = None               # etiqueta de asignación de costos para el historial mensual (p. ej. "Name" o "app")
