@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from ..domain.models import NormalizedResource, environment_from_tags
-from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
+from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, rds_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
 from .base import CollectionResult, CostRecord
 
 REGION = "us-east-1"
@@ -18,12 +18,21 @@ def _ec2(rid, name, itype, env, cpu, cpu_max, mem, age):
         cpu_avg=cpu, cpu_max=cpu_max, memory_avg=mem, age_days=age, observation_days=30, tags=tags)
 
 
-def _vol(rid, name, vtype, size, env, attached, unattached_days=None):
-    tags = {"Name": name, "Environment": env}
+def _vol(rid, name, vtype, size, env, attached, unattached_days=None, extra_tags=None, age=300):
+    tags = {"Name": name, "Environment": env, **(extra_tags or {})}
     return NormalizedResource(
         "aws", "storage", "ebs", rid, REGION, name=name, environment=environment_from_tags(tags), volume_type=vtype,
         state="in-use" if attached else "available", monthly_cost=volume_monthly_cost(vtype, size), cost_source="demo",
-        attached=attached, size_gb=size, age_days=300, observation_days=30, unattached_days=unattached_days, tags=tags)
+        attached=attached, size_gb=size, age_days=age, observation_days=30, unattached_days=unattached_days, tags=tags)
+
+
+def _rds(rid, name, db_class, engine, size, env, cpu, conns, conns_max, days, *, multi_az=False, extra_tags=None, **attrs):
+    tags = {"Name": name, "Environment": env, **(extra_tags or {})}
+    return NormalizedResource(
+        "aws", "database", "rds", rid, REGION, name=name, environment=environment_from_tags(tags), instance_type=db_class,
+        state="available", monthly_cost=rds_monthly_cost(db_class, size, multi_az), cost_source="demo", cpu_avg=cpu, size_gb=size,
+        age_days=500, observation_days=days, tags=tags,
+        attributes={"engine": engine, "multi_az": multi_az, "connections_avg": conns, "connections_max": conns_max, **attrs})
 
 
 def _snap(rid, name, size, age, env, extra_tags=None, attributes=None):
@@ -47,6 +56,26 @@ class DemoCollector:
             _snap("snap-0demo0oldbackup", "old-backup-dev", 300, 210, "development"),
             _snap("snap-0demo00legalhold", "audit-2021-snapshot", 120, 900, "production", {"retain": "true"}),
             _snap("snap-0demo00amibacked", None, 80, 400, "production", attributes={"ami_ids": ["ami-0demo"]}),
+            # --- volúmenes que quedaron sueltos tras despliegues fallidos
+            _vol("vol-0demo0failedpvc1", "pvc-3f9a-failed-deploy", "gp3", 100, "development", False, 38,
+                 {"kubernetes.io/created-for/pvc/name": "data-orders-0", "deploy": "orders-v2-failed"}, age=40),
+            _vol("vol-0demo0failedpvc2", "pvc-8c21-failed-deploy", "gp3", 100, "development", False, 38,
+                 {"kubernetes.io/created-for/pvc/name": "data-orders-1", "deploy": "orders-v2-failed"}, age=40),
+            _vol("vol-0demo0failedtf01", "tmp-rollout-aug-failed", "gp2", 250, "staging", False, 21, {"deploy": "rollout-aug-failed"}, age=60),
+            _vol("vol-0demo0failedprod", "canary-sep-failed", "gp3", 300, "production", False, 16, {"deploy": "canary-sep-failed"}, age=20),
+            _vol("vol-0demo0inprogress", "deploy-oct-in-progress", "gp3", 80, "development", False, 3, {"deploy": "orders-v3"}, age=3),
+            _vol("vol-0demo0keepdbbak", "db-export-keep", "gp3", 400, "development", False, 90, {"finops:ignore": "true"}),
+            # --- bases de datos: tres abandonadas (una en producción con protección contra borrado), una protegida y una en uso real
+            _rds("db-0demo000orderslegacy", "orders-legacy-dev", "db.m5.large", "mysql 8.0", 200, "development", 1.1, 0.0, 0.0, 45,
+                 backup_retention_days=7),
+            _rds("db-0demo0reportsstgold", "reports-stg-old", "db.r5.large", "postgres 14", 500, "staging", 2.4, 0.1, 1.0, 30,
+                 multi_az=True, backup_retention_days=14),
+            _rds("db-0demo000crmprod", "legacy-crm-prod", "db.t3.large", "postgres 12", 100, "production", 0.8, 0.0, 0.0, 60,
+                 deletion_protection=True, backup_retention_days=35),
+            _rds("db-0demo0customers", "customers-prod", "db.r5.xlarge", "postgres 15", 800, "production", 38.0, 85.0, 140.0, 30,
+                 multi_az=True, backup_retention_days=35),
+            _rds("db-0demo00audithold", "audit-archive-hold", "db.t3.medium", "mysql 8.0", 150, "production", 0.4, 0.0, 0.0, 90,
+                 extra_tags={"legal-hold": "true"}),
         ]
         today = date.today()
         costs = [

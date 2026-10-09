@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, usd } from "@/lib/api";
+import { api, download, usd } from "@/lib/api";
 import type { Summary } from "@/lib/types";
 import Badge from "@/components/Badge";
 import PageHead from "@/components/PageHead";
@@ -15,6 +15,7 @@ export default function Dashboard() {
   const [scans, setScans] = useState<Scan[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState<"" | "pdf" | "xlsx">("");
 
   const load = async () => {
     try {
@@ -30,10 +31,20 @@ export default function Dashboard() {
     catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
+  const exportReport = async (fmt: "pdf" | "xlsx") => {
+    setExporting(fmt); setErr("");
+    try { await download(`reports/executive?format=${fmt}`, `informe-ejecutivo.${fmt}`); }
+    catch (e: any) { setErr(e.message); } finally { setExporting(""); }
+  };
+
   return (
     <>
       <PageHead title="Panel" sub="Lo que podrías ahorrar este mes, lo que espera tu aprobación y lo que ya se verificó."
-                actions={<button onClick={scan} disabled={busy}>{busy ? "Encolando…" : "Ejecutar escaneo"}</button>} />
+                actions={<>
+                  <button className="secondary" onClick={() => exportReport("pdf")} disabled={!!exporting} data-testid="export-pdf">{exporting === "pdf" ? "Generando…" : "Informe PDF"}</button>
+                  <button className="secondary" onClick={() => exportReport("xlsx")} disabled={!!exporting} data-testid="export-xlsx">{exporting === "xlsx" ? "Generando…" : "Informe Excel"}</button>
+                  <button onClick={scan} disabled={busy}>{busy ? "Encolando…" : "Ejecutar escaneo"}</button>
+                </>} />
       {err && <p className="note bad" role="alert" style={{ marginBottom: 18 }}>{err}</p>}
       {s && (
         <>

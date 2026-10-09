@@ -2,11 +2,13 @@
 
 Hash: scrypt (N=2^15, r=8, p=3: perfil OWASP de 32 MiB) sobre HMAC-SHA256(pepper, contraseña normalizada NFKC). El pepper vive en el
 servidor (no en la base), así que un volcado de la tabla `accounts` por sí solo no basta para atacar las contraseñas offline.
-El formato es autodescriptivo (`scrypt$n$r$p$sal$hash`) para poder subir los parámetros más adelante y rehashear al iniciar sesión.
+El formato es autodescriptivo (`scrypt$n$r$p$sal$hash[$id_pepper]`): permite subir los parámetros o rotar el pepper (ver `pepper.py`) y rehashear
+al iniciar sesión sin invalidar nada.
 """
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import re
@@ -14,6 +16,8 @@ import secrets
 import threading
 import unicodedata
 import urllib.request
+
+from .pepper import LEGACY_ID, PepperRing, check_id
 
 SCRYPT_N, SCRYPT_R, SCRYPT_P, DK_LEN = 2**15, 8, 3, 32
 MIN_LENGTH, MAX_LENGTH = 12, 256
@@ -28,46 +32,72 @@ def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode("ascii")
 
 
-def hash_password(password: str, pepper: bytes, *, n: int = SCRYPT_N, r: int = SCRYPT_R, p: int = SCRYPT_P) -> str:
+def hash_password(password: str, pepper: bytes, *, pepper_id: str = LEGACY_ID, n: int = SCRYPT_N, r: int = SCRYPT_R,
+                  p: int = SCRYPT_P) -> str:
+    """El id del pepper se añade al final salvo para el id histórico (`1`), que conserva el formato de siempre."""
+    check_id(pepper_id)
     salt = secrets.token_bytes(16)
     with _slots:
         dk = hashlib.scrypt(_prehash(password, pepper), salt=salt, n=n, r=r, p=p, dklen=DK_LEN, maxmem=256 * 1024 * 1024)
-    return f"scrypt${n}${r}${p}${_b64(salt)}${_b64(dk)}"
+    out = f"scrypt${n}${r}${p}${_b64(salt)}${_b64(dk)}"
+    return out if pepper_id == LEGACY_ID else f"{out}${pepper_id}"
 
 
-def verify_password(password: str, stored: str, pepper: bytes) -> bool:
+def _parse(stored: str) -> tuple[int, int, int, bytes, bytes, str]:
+    """(n, r, p, sal, dk, id_pepper). Lanza ValueError si el formato no es válido o los parámetros se salen de rango."""
+    parts = stored.split("$")
+    if len(parts) not in (6, 7) or parts[0] != "scrypt":
+        raise ValueError("formato")
+    pepper_id = check_id(parts[6]) if len(parts) == 7 else LEGACY_ID
+    n, r, p = int(parts[1]), int(parts[2]), int(parts[3])
+    if not (2**10 <= n <= 2**20 and 1 <= r <= 32 and 1 <= p <= 16):      # un hash manipulado no puede pedir memoria sin límite
+        raise ValueError("parámetros")
+    return n, r, p, base64.b64decode(parts[4], validate=True), base64.b64decode(parts[5], validate=True), pepper_id
+
+
+def pepper_id_of(stored: str) -> str | None:
     try:
-        scheme, n, r, p, salt, dk = stored.split("$")
-        if scheme != "scrypt":
-            return False
-        expected = base64.b64decode(dk)
-        if not (2**10 <= int(n) <= 2**20 and 1 <= int(r) <= 32 and 1 <= int(p) <= 16):      # un hash manipulado no puede pedir memoria sin límite
-            return False
+        return _parse(stored)[5]
+    except (ValueError, TypeError, binascii.Error):
+        return None
+
+
+def verify_password(password: str, stored: str, pepper: bytes | PepperRing) -> bool:
+    """Con un `PepperRing` se elige el pepper según el id del hash. Si ese pepper ya no existe devuelve False tras el mismo trabajo
+    de scrypt, para que el tiempo no delate qué cuentas siguen con un pepper retirado."""
+    try:
+        n, r, p, salt, expected, pid = _parse(stored)
+        if isinstance(pepper, PepperRing):
+            key = pepper.get(pid)
+            found = key is not None
+            key = key if found else pepper.current
+        else:
+            key, found = pepper, True
         with _slots:
-            got = hashlib.scrypt(_prehash(password, pepper), salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p),
-                                 dklen=len(expected), maxmem=256 * 1024 * 1024)
-    except (ValueError, TypeError):
+            got = hashlib.scrypt(_prehash(password, key), salt=salt, n=n, r=r, p=p, dklen=len(expected), maxmem=256 * 1024 * 1024)
+    except (ValueError, TypeError, binascii.Error):
         return False
-    return hmac.compare_digest(got, expected)
+    return found and hmac.compare_digest(got, expected)
 
 
-def needs_rehash(stored: str) -> bool:
+def needs_rehash(stored: str, current_id: str = LEGACY_ID) -> bool:
+    """True si los parámetros de scrypt cambiaron o el hash usa un pepper que ya no es el actual."""
     try:
-        _, n, r, p, _, _ = stored.split("$")
-        return (int(n), int(r), int(p)) != (SCRYPT_N, SCRYPT_R, SCRYPT_P)
-    except ValueError:
+        n, r, p, _, _, pid = _parse(stored)
+    except (ValueError, TypeError, binascii.Error):
         return True
+    return (n, r, p) != (SCRYPT_N, SCRYPT_R, SCRYPT_P) or pid != current_id
 
 
-_dummy: str | None = None
+_dummy: dict[tuple[str, bytes], str] = {}
 
 
-def dummy_hash(pepper: bytes) -> str:
+def dummy_hash(pepper: bytes, pepper_id: str = LEGACY_ID) -> str:
     """Hash de relleno: se verifica cuando el correo no existe para que el tiempo de respuesta no delate cuentas."""
-    global _dummy
-    if _dummy is None:
-        _dummy = hash_password(secrets.token_urlsafe(16), pepper)
-    return _dummy
+    key = (pepper_id, pepper)
+    if key not in _dummy:
+        _dummy[key] = hash_password(secrets.token_urlsafe(16), pepper, pepper_id=pepper_id)
+    return _dummy[key]
 
 
 # ---------------------------------------------------------------- política

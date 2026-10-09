@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 import PasswordField from "@/components/PasswordField";
 import { ApiError, authApi } from "@/lib/api";
 import { safeNext } from "@/lib/nav";
+import { getPasskey, passkeyErrorMessage, passkeysSupported } from "@/lib/webauthn";
 import { ROLES, ROLE_LABEL } from "@/lib/roles";
 
-type Cfg = { local_enabled: boolean; signup_open: boolean; dev_login_enabled: boolean };
+type Cfg = { local_enabled: boolean; signup_open: boolean; dev_login_enabled: boolean; passkeys_enabled?: boolean };
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -52,6 +53,19 @@ export default function Login() {
     } finally { setBusy(false); }
   };
 
+  const passkeyLogin = async () => {
+    setBusy(true); setErr(""); setNotice(null);
+    try {
+      const { options } = await authApi<{ options: Record<string, unknown> }>("passkey/login/options", { method: "POST", body: {} });
+      const credential = await getPasskey(options);
+      await authApi("passkey/login", { method: "POST", body: { credential } });
+      window.location.href = safeNext();
+    } catch (e: unknown) {
+      if (e instanceof ApiError && e.status === 429) setWait(e.retryAfter ?? 60);
+      setErr(passkeyErrorMessage(e));
+    } finally { setBusy(false); }
+  };
+
   const resend = async () => {
     try {
       const r = await authApi<{ dev_link?: string | null }>("resend-verification", { method: "POST", body: { email } });
@@ -67,6 +81,8 @@ export default function Login() {
   };
 
   const locked = wait > 0;
+  const [canPasskey, setCanPasskey] = useState(false);
+  useEffect(() => { setCanPasskey(passkeysSupported()); }, []);
   return (
     <div className="slip">
       <h1>Entra a tu cuenta</h1>
@@ -84,6 +100,9 @@ export default function Login() {
           {err && <p className="note bad" role="alert">{locked ? `Demasiados intentos. Vuelve a intentarlo en ${Math.floor(wait / 60)}:${String(wait % 60).padStart(2, "0")}.` : err}</p>}
           {unverified && <button type="button" className="secondary" onClick={resend}>Reenviar correo de confirmación</button>}
           <button type="submit" className="block" disabled={busy || locked || !email || !password}>{busy ? "Entrando…" : "Entrar"}</button>
+          {cfg.passkeys_enabled && canPasskey && (
+            <button type="button" className="secondary block" disabled={busy || locked} onClick={passkeyLogin}>Entrar con llave de acceso</button>
+          )}
           <div className="auth-links">
             <Link href="/forgot-password">Olvidé mi contraseña</Link>
             {cfg.signup_open

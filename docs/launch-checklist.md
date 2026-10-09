@@ -14,8 +14,10 @@ Qué está resuelto en el repositorio, qué depende de ti y qué conviene hacer 
 - [x] Métricas HTTP y de autenticación, y reglas de alerta (`infrastructure/docker/alerts.yml`).
 - [x] Borradores de Términos y Política de privacidad en `/terms` y `/privacy`.
 - [x] Medición de capacidad de inicio de sesión (docs/deployment.md §7).
+- [x] Llaves de acceso (WebAuthn): segundo factor y entrada sin contraseña, probadas con un autenticador de software y, en CI, con uno virtual de Chromium ([passkeys.md](passkeys.md)).
 
 ## Depende de ti (no puedo hacerlo desde aquí)
+- [ ] Probar las llaves de acceso con tus dispositivos reales (Windows Hello, Touch ID/iCloud, Android, YubiKey) en tu dominio definitivo: el RP ID no se puede cambiar después ([passkeys.md](passkeys.md) §4).
 - [ ] Servidor con Docker, dominio y DNS apuntando a él; firewall con 22/80/443.
 - [ ] `.env.production` con secretos propios; **`AUTH_PEPPER` guardado además en un gestor aparte**.
 - [ ] Cuenta SMTP y registros SPF, DKIM y DMARC del dominio remitente ([email.md](email.md)); prueba de entrega a la bandeja principal.
@@ -29,7 +31,7 @@ Qué está resuelto en el repositorio, qué depende de ti y qué conviene hacer 
 - [ ] Proteger `main` en GitHub (revisión obligatoria y checks `api`, `web`, `e2e`, `backups`, `docker`, `security`, `policies`).
 
 ## Conviene hacer después del lanzamiento
-- [ ] **Rotación del pepper**: hoy no es posible sin invalidar contraseñas y 2FA. Requiere aceptar dos peppers a la vez y reescribir hashes en el siguiente login; hay que construirlo antes de necesitarlo.
+- [x] **Rotación del pepper**: construida (ver [pepper-rotation.md](pepper-rotation.md)). Pendiente de ti: ensayarla una vez en un entorno de prueba antes de necesitarla de verdad.
 - [ ] Pasar la CSP a nonces (quitar `'unsafe-inline'` de los scripts): exige renderizado dinámico.
 - [ ] Passkeys (WebAuthn) como segundo factor más fuerte que TOTP.
 - [ ] Registrar la aceptación de los términos con fecha y versión (hoy el aviso es informativo al pie de las pantallas de acceso).

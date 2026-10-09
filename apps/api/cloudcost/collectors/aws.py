@@ -1,8 +1,9 @@
 """Conector AWS de SOLO LECTURA: inventario EC2/EBS/snapshots + métricas de CloudWatch.
 
 Permisos necesarios: ver infrastructure/terraform/aws-readonly-role. El conector nunca llama a APIs de escritura.
-Los costos son una estimación por tabla de precios salvo que se active AWS_COST_EXPLORER_RESOURCES=true
-(Cost Explorer a nivel de recurso, ventana máxima de 14 días, requiere habilitarlo en la cuenta de pagos).
+Los costos son REALES (Cost Explorer por recurso, ventana de 14 días; ver `aws_costs.py`) cuando AWS_COST_EXPLORER_RESOURCES=true
+(valor por defecto) y la cuenta tiene habilitado Cost Explorer a nivel de recurso. Si Cost Explorer no está disponible,
+cada recurso conserva la estimación por tabla de precios y se marca `cost_source="estimate"`; el escaneo avisa pero no falla.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ from typing import Any
 from ..domain.models import NormalizedResource, environment_from_tags
 from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
 from ..secrets import SecretResolver
+from . import aws_costs
 from .base import CollectionResult, CostRecord
 
 log = logging.getLogger(__name__)
@@ -32,10 +34,14 @@ def _age_days(ts: datetime | None) -> int | None:
 
 class AwsCollector:
     def __init__(self, account: dict[str, Any], secrets: SecretResolver, *, use_cost_explorer: bool = False,
-                 on_api_error=None, session=None):
+                 on_api_error=None, session=None, cost_tag_key: str | None = None, cost_history_months: int = 6,
+                 cost_metric: str = aws_costs.DEFAULT_METRIC):
         self.account = account
         self.secrets = secrets
         self.use_cost_explorer = use_cost_explorer
+        self.cost_tag_key = (cost_tag_key or "").strip() or None
+        self.cost_history_months = cost_history_months
+        self.cost_metric = cost_metric
         self.on_api_error = on_api_error or (lambda api: None)
         self._session = session
         self.warnings: list[str] = []
@@ -61,12 +67,14 @@ class AwsCollector:
                                       aws_session_token=creds["SessionToken"])
         return self._session
 
-    def _safe(self, api: str, fn, default):
+    def _safe(self, api: str, fn, default, *, inventory: bool = True):
+        """`inventory=False`: el fallo no afecta a lo inventariado (p. ej. Cost Explorer), solo avisa; no marca el escaneo parcial."""
         try:
             return fn()
         except Exception as exc:                      # los fallos parciales no deben abortar todo el escaneo
             self.on_api_error(api)
-            self.partial = True
+            if inventory:
+                self.partial = True
             self.warnings.append(f"{api}: {type(exc).__name__}")
             log.warning("aws api error api=%s err=%s", api, type(exc).__name__)
             return default
@@ -78,13 +86,9 @@ class AwsCollector:
             result.resources += self._collect_region(region)
         now_day = date.today()
         by_id = {r.resource_id: r for r in result.resources}
-        real = self._resource_costs() if self.use_cost_explorer else {}
-        for rid, daily in real.items():
-            res = by_id.get(rid)
-            if res and daily:
-                res.monthly_cost = round(fmean(a for _, a in daily) * DAYS_PER_MONTH, 2)
-                res.cost_source = "cost_explorer"
-                result.costs += [CostRecord(rid, d, a, res.service, res.region, "cost_explorer") for d, a in daily]
+        if self.use_cost_explorer:
+            self._apply_real_costs(by_id, result)
+        self._apply_tag_history(result.resources)
         for res in result.resources:
             if res.cost_source != "cost_explorer":
                 result.costs += [CostRecord(res.resource_id, now_day - timedelta(days=d),
@@ -261,28 +265,46 @@ class AwsCollector:
                 age_days=_age_days(sn.get("StartTime")), tags=tags, attributes=attrs))
         return out
 
-    # ------------------------------------------------------------------ Costos reales (opcional)
-    def _resource_costs(self) -> dict[str, list[tuple[date, float]]]:
-        def fetch():
-            ce = self._boto_session().client("ce", region_name="us-east-1")
-            end, start = date.today(), date.today() - timedelta(days=WINDOW_DAYS)
-            out: dict[str, list[tuple[date, float]]] = {}
-            token = None
-            while True:
-                kw: dict[str, Any] = dict(
-                    TimePeriod={"Start": start.isoformat(), "End": end.isoformat()}, Granularity="DAILY",
-                    Metrics=["UnblendedCost"],
-                    Filter={"Dimensions": {"Key": "SERVICE", "Values": [
-                        "Amazon Elastic Compute Cloud - Compute", "EC2 - Other"]}},
-                    GroupBy=[{"Type": "DIMENSION", "Key": "RESOURCE_ID"}])
-                if token:
-                    kw["NextPageToken"] = token
-                resp = ce.get_cost_and_usage_with_resources(**kw)
-                for bucket in resp["ResultsByTime"]:
-                    day = date.fromisoformat(bucket["TimePeriod"]["Start"])
-                    for g in bucket["Groups"]:
-                        out.setdefault(g["Keys"][0], []).append((day, float(g["Metrics"]["UnblendedCost"]["Amount"])))
-                token = resp.get("NextPageToken")
-                if not token:
-                    return out
-        return self._safe("ce:GetCostAndUsageWithResources", fetch, {})
+    # ------------------------------------------------------------------ Costos reales (Cost Explorer)
+    def _ce(self):
+        return self._boto_session().client("ce", region_name="us-east-1")      # Cost Explorer es un endpoint global
+
+    def _apply_real_costs(self, by_id: dict[str, NormalizedResource], result: CollectionResult) -> None:
+        """Sustituye la estimación por el costo real de los últimos 14 días, recurso por recurso."""
+        real = self._safe("ce:GetCostAndUsageWithResources",
+                          lambda: aws_costs.fetch_resource_costs(self._ce(), metric=self.cost_metric), None, inventory=False)
+        if real is None:                                  # fallo ya registrado por _safe: se conserva la estimación
+            return
+        matched = 0
+        for rid, cost in real.items():
+            res = by_id.get(rid)
+            if not res or not cost.daily:
+                continue
+            matched += 1
+            res.monthly_cost = cost.monthly_estimate(DAYS_PER_MONTH, age_days=res.age_days)
+            res.cost_source = "cost_explorer"
+            res.attributes["cost_basis"] = {
+                "source": "cost_explorer", "metric": self.cost_metric, "window_days": aws_costs.RESOURCE_WINDOW_DAYS,
+                "days_with_data": cost.days_with_data, "last_14d_total": round(sum(a for _, a in cost.daily), 2)}
+            result.costs += [CostRecord(rid, d, a, res.service, res.region, "cost_explorer") for d, a in cost.daily]
+        if real and not matched:
+            self.warnings.append("Cost Explorer devolvió costos pero ninguno coincide con los recursos inventariados")
+        elif by_id and not real:
+            self.warnings.append("Cost Explorer sin datos por recurso: se usa la tabla de precios (¿habilitado el nivel de recurso?)")
+
+    def _apply_tag_history(self, resources: list[NormalizedResource]) -> None:
+        """Historial mensual (hasta 12 meses) por valor de la etiqueta de asignación de costos configurada."""
+        if not (self.use_cost_explorer and self.cost_tag_key):
+            return
+        history = self._safe(
+            "ce:GetCostAndUsage",
+            lambda: aws_costs.fetch_tag_history(self._ce(), self.cost_tag_key, months=self.cost_history_months,
+                                                metric=self.cost_metric), {}, inventory=False)
+        for res in resources:
+            value = res.tags.get(self.cost_tag_key)
+            series = history.get(value) if value else None
+            if series:
+                res.attributes["cost_history"] = {
+                    "scope": "tag", "tag_key": self.cost_tag_key, "tag_value": value, "monthly": series,
+                    "trend_pct": aws_costs.trend_pct(series),
+                    "note": "Costo agregado de todos los recursos con esta etiqueta, no de este recurso por separado."}
