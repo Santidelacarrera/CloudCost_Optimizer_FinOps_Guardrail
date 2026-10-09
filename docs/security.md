@@ -29,12 +29,21 @@ Guía de configuración en [sso.md](sso.md). Código de autorización + PKCE (S2
 - **Identidad = (emisor, sub), no el correo** (*nOAuth*). Un correo ya existente no se reasigna: enlazar una cuenta local exige `SSO_LINK_EXISTING=true`, correo verificado por el IdP y la misma organización; la cuenta pierde su contraseña local y se cierran sus sesiones.
 - **Roles desde el IdP**: grupos o roles de aplicación mapeados con prioridad fija (ADMIN > FINOPS > SRE > DEVELOPER > AUDITOR > VIEWER), recalculados en cada acceso. Sin coincidencia: rol por defecto o rechazo. El segundo factor lo exige el IdP (`SSO_REQUIRED_AMR=mfa` lo verifica).
 - **Auditoría**: `LOGIN_SUCCEEDED` (con `sso`), `ACCOUNT_CREATED`/`ACCOUNT_LINKED`, `MEMBER_UPDATED` al cambiar el rol y `SSO_LOGIN_FAILED` con el código del fallo, sin correos ni tokens. Un callback sin flujo válido no escribe en la auditoría.
+## Llaves de acceso (WebAuthn / passkeys)
+Guía en [passkeys.md](passkeys.md). Segundo factor y entrada sin contraseña con huella, rostro, PIN o llave de seguridad.
+- **Resistentes al phishing**: la firma queda atada al dominio (RP ID) y al origen exacto; un sitio falso no puede obtener una respuesta válida. Se rechaza `crossOrigin`/`topOrigin`.
+- **Siempre con verificación del usuario** (UV) y presencia (UP): por eso una llave basta para entrar y cuenta como segundo factor.
+- **Retos de un solo uso**: 32 bytes aleatorios, 5 min, se consumen al verificar (con éxito o sin él), atados a la cuenta en el registro y en el 2FA. Una respuesta capturada no se puede repetir.
+- **Contador de firmas**: si crece debe seguir creciendo (detecta clonación); los passkeys sincronizados, que devuelven 0, no se penalizan. El avance es atómico (dos respuestas simultáneas no pasan las dos).
+- **Verificador propio sin dependencias nuevas** (ES256, EdDSA, RS256 ≥ 2048 bits; CBOR acotado, sin longitudes indefinidas, con límite de profundidad y de tamaño). No se valida la atestación (`attestation: none`): no se restringe el fabricante.
+- **En la base solo la clave pública**; los fallos no bloquean la cuenta (no se puede adivinar una firma): cuentan contra la IP y, en el 2FA, contra la sesión pendiente. Emisión de retos limitada por IP.
+- **Registrar o quitar una llave exige la contraseña**; registrar la primera cierra las demás sesiones y quitar una también. Las cuentas SSO no usan llaves. El comando de operador `reset-mfa` también quita las llaves de quien las perdió.
 
 ## Producción
 `ENV=production` exige `AUTH_PEPPER` propio (≥32), `SMTP_HOST` y `PUBLIC_WEB_URL` https, y se niega a arrancar con auth de desarrollo o demo activa. La web solo habilita el acceso de desarrollo con `DEV_LOGIN=dev` explícito (el compose de producción no lo define). El camino completo (TLS, copias, alertas, despliegue) está en [deployment.md](deployment.md) y la lista de comprobación en [launch-checklist.md](launch-checklist.md).
 
-- **Pepper**: guárdalo en un gestor de secretos **y fuera del servidor**; las copias de seguridad no lo incluyen. No se puede rotar hoy sin invalidar contraseñas y 2FA (ver la lista de lanzamiento).
+- **Pepper**: guárdalo en un gestor de secretos **y fuera del servidor**; las copias de seguridad no lo incluyen. Se puede rotar sin invalidar contraseñas ni 2FA: cada hash, secreto TOTP y código de recuperación guarda el id del pepper con el que se creó, y la API acepta varios a la vez (`AUTH_PEPPER_ID` + `AUTH_PEPPER_PREVIOUS`). Procedimiento y límites en [pepper-rotation.md](pepper-rotation.md).
 - **Registro**: `AUTH_SIGNUP_OPEN=false` limita la creación de cuentas a invitaciones.
 - **Copias**: `pg_dump` cifrado en tránsito hacia S3 (`BACKUP_S3_URI`); cada copia se restaura en una base temporal y se verifica la cadena de auditoría. El rol que copia debe saltarse RLS.
 - **Observabilidad**: métricas `http_requests_total`, `http_request_duration_seconds`, `auth_failures_total{code}` y `auth_logins_total{status}`; reglas en `infrastructure/docker/alerts.yml`. `/metrics` solo es alcanzable dentro de la red de Docker.
-- **Límites conocidos**: la CSP mantiene `'unsafe-inline'` en scripts (las páginas son estáticas; los nonces exigen renderizado dinámico). Pendiente: rotación del pepper, passkeys (WebAuthn), prueba de penetración externa.
+- **Límites conocidos**: la CSP de scripts usa un nonce por petición con `'strict-dynamic'` y **sin** `'unsafe-inline'` (`apps/web/middleware.ts`, `lib/csp.ts`; todas las páginas se renderizan en cada petición). `style-src` conserva `'unsafe-inline'` porque la interfaz usa atributos `style` de React, que un nonce no puede cubrir. Pendiente: passkeys (WebAuthn), prueba de penetración externa.

@@ -68,10 +68,15 @@ export async function callApi(path: string, init: { method?: string; body?: stri
 /** Reenvía la respuesta de la API conservando estado, cuerpo y Retry-After. */
 export async function relay(r: Response) {
   const retry = r.headers.get("retry-after");
-  const text = r.status === 204 || r.status === 205 ? null : await r.text();
-  return new NextResponse(text, {
+  const type = r.headers.get("content-type") ?? "application/json";
+  const disposition = r.headers.get("content-disposition");
+  // Descargas (informes PDF/Excel): el cuerpo se reenvía como bytes; leerlo como texto lo corrompería.
+  const binary = !/^(application\/json|text\/)/i.test(type) && r.status < 300;
+  const body = r.status === 204 || r.status === 205 ? null : binary ? await r.arrayBuffer() : await r.text();
+  return new NextResponse(body, {
     status: r.status,
-    headers: { ...NO_STORE, "Content-Type": r.headers.get("content-type") ?? "application/json", ...(retry ? { "Retry-After": retry } : {}) },
+    headers: { ...NO_STORE, "Content-Type": type, "X-Content-Type-Options": "nosniff",
+               ...(disposition ? { "Content-Disposition": disposition } : {}), ...(retry ? { "Retry-After": retry } : {}) },
   });
 }
 

@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudCost Optimizer - rol IAM de SOLO LECTURA. Permite a la plataforma asumir un rol en tu cuenta
+  (sts:AssumeRole + ExternalId) para leer inventario, metricas y costos. No concede ninguna escritura.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label: { default: "Conexion con CloudCost (te los muestra la plataforma)" }
+        Parameters: [TrustedPrincipalArn, ExternalId]
+      - Label: { default: "Opciones" }
+        Parameters: [EnableCostExplorer, RoleName]
+    ParameterLabels:
+      TrustedPrincipalArn: { default: "ARN de la plataforma CloudCost" }
+      ExternalId: { default: "ExternalId (secreto compartido)" }
+      EnableCostExplorer: { default: "Leer costos reales (Cost Explorer)" }
+      RoleName: { default: "Nombre del rol" }
+
+Parameters:
+  TrustedPrincipalArn:
+    Type: String
+    Description: ARN del rol de CloudCost (cuenta de la plataforma) autorizado a asumir este rol.
+    AllowedPattern: '^arn:aws(-cn|-us-gov)?:iam::[0-9]{12}:(root|role/[A-Za-z0-9+=,.@_/-]+|user/[A-Za-z0-9+=,.@_/-]+)$'
+    ConstraintDescription: Debe ser el ARN de un usuario, rol o cuenta concreta (no se admiten comodines).
+  ExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    MaxLength: 1224
+    AllowedPattern: '^[A-Za-z0-9+=,.@:/_-]+$'
+    ConstraintDescription: Entre 16 y 1224 caracteres [A-Za-z0-9+=,.@:/_-].
+    Description: Evita el ataque del delegado confuso. Guardalo en tu gestor de secretos; CloudCost solo guarda una referencia.
+  EnableCostExplorer:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: Permite leer el costo real por recurso (ce:GetCostAndUsage*). Solo lectura.
+  RoleName:
+    Type: String
+    Default: CloudCostOptimizerReadOnly
+    MinLength: 1
+    MaxLength: 64
+    AllowedPattern: '^[A-Za-z0-9+=,.@_-]+$'
+    Description: Si lo cambias, acepta la capacidad CAPABILITY_NAMED_IAM al crear la pila.
+
+Conditions:
+  CostExplorerEnabled:
+    Fn::Equals: [{ Ref: EnableCostExplorer }, "true"]
+
+Resources:
+  ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: { Ref: RoleName }
+      Description: Rol de solo lectura asumido por CloudCost Optimizer.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: { Ref: TrustedPrincipalArn }
+            Action: "sts:AssumeRole"
+            Condition:
+              StringEquals:
+                "sts:ExternalId": { Ref: ExternalId }
+      Policies:
+        - PolicyName: readonly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadInventoryAndMetrics
+                Effect: Allow
+                Action:
+                  - "ec2:DescribeInstances"
+                  - "ec2:DescribeVolumes"
+                  - "ec2:DescribeSnapshots"
+                  - "ec2:DescribeImages"
+                  - "ec2:DescribeInstanceTypes"
+                  - "cloudwatch:GetMetricData"
+                  - "cloudwatch:ListMetrics"
+                  - "cloudtrail:LookupEvents"
+                  - "backup:ListProtectedResources"
+                  - "dlm:GetLifecyclePolicies"
+                  - "dlm:GetLifecyclePolicy"
+                Resource: "*"
+              - Fn::If:
+                  - CostExplorerEnabled
+                  - Sid: ReadCosts
+                    Effect: Allow
+                    Action:
+                      - "ce:GetCostAndUsage"
+                      - "ce:GetCostAndUsageWithResources"
+                    Resource: "*"
+                  - Ref: AWS::NoValue
+
+Outputs:
+  RoleArn:
+    Description: Pega este ARN en CloudCost para terminar de conectar la cuenta.
+    Value: { "Fn::GetAtt": [ReadOnlyRole, Arn] }
+  AccountId:
+    Description: Cuenta AWS donde se creo el rol.
+    Value: { Ref: "AWS::AccountId" }

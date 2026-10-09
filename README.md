@@ -21,7 +21,7 @@ Detectar → Analizar → Explicar → Proponer → Validar → Aprobar → Crea
 | Observabilidad | Logs JSON, métricas Prometheus (API y worker), OpenTelemetry opcional |
 | Calidad | Pruebas unitarias + integración contra Postgres real, CI (ruff, pytest, trivy, checkov, terraform validate, OPA) |
 
-Fases posteriores (no incluidas): GitLab, Azure, GCP, Kubernetes/Helm, evaluación OPA dentro de la API, Cost Explorer por recurso por defecto.
+Ampliaciones posteriores, cada una en su propio documento (estado y límites en [docs/roadmap-status.md](docs/roadmap-status.md)): costo real por recurso con Cost Explorer, informes ejecutivos PDF/Excel, GitLab (Merge Requests), evaluación OPA/Rego nativa, incorporación de AWS con CloudFormation de un clic, colectores Azure y GCP, Kubernetes/Helm, SSO (Entra ID/Okta), passkeys y rotación del pepper.
 
 ## Arranque rápido (demo, sin cuenta AWS)
 
@@ -31,7 +31,7 @@ docker compose up --build       # postgres, redis, migraciones+seed, api, worker
 ```
 - UI: http://localhost:5985 (puertos configurables con `WEB_PORT`/`API_PORT` en `.env`). Crea tu cuenta desde **Crear cuenta** (sin servidor de correo, el enlace de confirmación aparece en pantalla) o entra con la demostración de desarrollo (elige rol, p. ej. `FINOPS`).
 - API/Swagger: http://localhost:5986/docs
-- Pulsa **Ejecutar escaneo** → 10 recursos sintéticos, 6 hallazgos, ≈ USD 777/mes.
+- Pulsa **Ejecutar escaneo** → 21 recursos sintéticos, 13 hallazgos, ≈ USD 1.573/mes (AWS, Azure, GCP y Kubernetes).
 - Flujo por consola: `pip install requests && python scripts/demo_flow.py`
 
 En modo demo el "PR" se escribe en disco (proveedor local) y el merge se simula desde la UI.
@@ -64,7 +64,10 @@ Ver [docs/runbook.md](docs/runbook.md) (rol IAM de solo lectura con Terraform en
 
 ## Documentación
 - [Arquitectura](docs/architecture.md) · [Seguridad](docs/security.md) · [Runbook](docs/runbook.md) · [ADRs](docs/adr/)
-- Producción: [Despliegue](docs/deployment.md) · [Correo (SPF/DKIM/DMARC)](docs/email.md) · [Lista de lanzamiento](docs/launch-checklist.md)
+- Producción: [Despliegue](docs/deployment.md) · [Correo (SPF/DKIM/DMARC)](docs/email.md) · [Lista de lanzamiento](docs/launch-checklist.md) · [Estado de la hoja de ruta](docs/roadmap-status.md)
+- Conectar nubes: [AWS (CloudFormation)](docs/onboarding-aws.md) · [Azure y GCP](docs/onboarding-azure-gcp.md) · [Kubernetes/Helm](docs/kubernetes-helm.md) · [Políticas OPA](docs/policies.md)
+- Identidad: [SSO OIDC](docs/sso.md) · [Passkeys](docs/passkeys.md) · [Rotación del pepper](docs/pepper-rotation.md)
+- Seguridad externa: [Paquete de pentest](docs/pentest/scope.md) ([modelo de amenazas](docs/pentest/threat-model.md), [checklist](docs/pentest/checklist.md))
 
 ## Estructura
 ```

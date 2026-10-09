@@ -134,3 +134,88 @@ resource "aws_ebs_snapshot" "legal_hold" {
     retain      = "true" # protegido: ninguna regla lo propone
   }
 }
+
+# --------------------------------------------------------------- Despliegues fallidos (los volúmenes pvc-* los creó Kubernetes: no tienen bloque aquí)
+resource "aws_ebs_volume" "tmp_rollout" {
+  availability_zone = "us-east-1b"
+  size              = 250
+  type              = "gp2"
+
+  tags = {
+    Name        = "tmp-rollout-aug-failed"
+    Environment = "staging"
+  }
+}
+
+resource "aws_ebs_volume" "canary" {
+  availability_zone = "us-east-1a"
+  size              = 300
+  type              = "gp3"
+
+  tags = {
+    Name        = "canary-sep-failed"
+    Environment = "production"
+  }
+}
+
+# --------------------------------------------------------------- Bases de datos
+resource "aws_db_instance" "orders_legacy" {
+  identifier          = "orders-legacy-dev"
+  engine              = "mysql"
+  instance_class      = "db.m5.large"
+  allocated_storage   = 200
+  skip_final_snapshot = true
+
+  tags = {
+    Name        = "orders-legacy-dev"
+    Environment = "development"
+  }
+}
+
+resource "aws_db_instance" "reports_stg_old" {
+  identifier          = "reports-stg-old"
+  engine              = "postgres"
+  instance_class      = "db.r5.large"
+  allocated_storage   = 500
+  multi_az            = true
+  skip_final_snapshot = true
+
+  tags = {
+    Name        = "reports-stg-old"
+    Environment = "staging"
+  }
+}
+
+# Referencia a la base anterior: el parche automático se niega a eliminarla mientras alguien la use (caso «referenced»).
+resource "aws_ssm_parameter" "reports_db_host" {
+  name  = "/reports/db_host"
+  type  = "String"
+  value = aws_db_instance.reports_stg_old.address
+}
+
+resource "aws_db_instance" "legacy_crm" {
+  identifier          = "legacy-crm-prod"
+  engine              = "postgres"
+  instance_class      = "db.t3.large"
+  allocated_storage   = 100
+  deletion_protection = true
+  skip_final_snapshot = false
+
+  tags = {
+    Name        = "legacy-crm-prod"
+    Environment = "production"
+  }
+}
+
+resource "aws_db_instance" "customers" {
+  identifier        = "customers-prod"
+  engine            = "postgres"
+  instance_class    = "db.r5.xlarge"
+  allocated_storage = 800
+  multi_az          = true
+
+  tags = {
+    Name        = "customers-prod"
+    Environment = "production"
+  }
+}
