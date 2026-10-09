@@ -43,7 +43,7 @@ WEBHOOK = ("POST", "/api/v1/webhooks/github/{org_id}")
 
 # Lo que SÍ puede hacer el rol de solo lectura: consultar y gestionar su propia cuenta. Todo lo demás debe darle 403.
 VIEWER_ALLOWED = {
-    ("GET", "/api/v1/cloud-accounts"), ("GET", "/api/v1/repositories"), ("GET", "/api/v1/dashboard/summary"),
+    ("GET", "/api/v1/cloud-accounts"), ("GET", "/api/v1/repositories"), ("GET", "/api/v1/dashboard/summary"), ("GET", "/api/v1/dashboard/savings-projection"),
     ("GET", "/api/v1/imports/template"), ("GET", "/api/v1/reports/executive"), ("GET", "/api/v1/recommendations"), ("GET", "/api/v1/recommendations/{rec_id}"),
     ("GET", "/api/v1/scans"), ("GET", "/api/v1/scans/{scan_id}"),
     ("GET", "/api/v1/auth/me"), ("POST", "/api/v1/auth/change-password"), ("GET", "/api/v1/auth/sessions"),

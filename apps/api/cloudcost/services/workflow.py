@@ -143,7 +143,7 @@ def create_pull_request(conn: Connection, p: Principal, rec_id, *, settings: Set
         (str(rec_id), rec["version"])).fetchall()
     # Política (OPA/Rego) evaluada AQUÍ, antes de tocar el repositorio: no depende de que el CI del cliente la ejecute.
     verdict = guardrail.evaluate_plan(settings, guardrail.plan_from_change(
-        tf_type=block.type, address=block.address, action=rec["action"], params=rec["params"], resource=res, rec=rec,
+        tf_type=getattr(block, "type", None) or "helm_values", address=block.address, action=rec["action"], params=rec["params"], resource=res, rec=rec,
         approvals=approvals))
     if verdict.mode != "off":
         audit.record(conn, p.org_id, audit.POLICY_EVALUATED, actor=audit.user_actor(p), entity_type="recommendation",
