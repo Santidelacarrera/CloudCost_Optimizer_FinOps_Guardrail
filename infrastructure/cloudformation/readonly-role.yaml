@@ -76,13 +76,9 @@ Resources:
                   - "ec2:DescribeVolumes"
                   - "ec2:DescribeSnapshots"
                   - "ec2:DescribeImages"
-                  - "ec2:DescribeInstanceTypes"
                   - "cloudwatch:GetMetricData"
                   - "cloudwatch:ListMetrics"
                   - "cloudtrail:LookupEvents"
-                  - "backup:ListProtectedResources"
-                  - "dlm:GetLifecyclePolicies"
-                  - "dlm:GetLifecyclePolicy"
                 Resource: "*"
               - Fn::If:
                   - CostExplorerEnabled

@@ -28,7 +28,10 @@ class Mail:
 
 def send(settings: Settings, mail: Mail) -> bool:
     if not settings.smtp_host:
-        log.warning("CORREO (SMTP no configurado) para=%s asunto=%r enlace=%s", mail.to, mail.subject, mail.link)
+        if settings.env == "development":              # el enlace lleva un token de un solo uso: solo en desarrollo se deja en el log
+            log.warning("CORREO (SMTP no configurado) para=%s asunto=%r enlace=%s", mail.to, mail.subject, mail.link)
+        else:
+            log.warning("CORREO (SMTP no configurado) no enviado a %s: %r", mail.to, mail.subject)
         return False
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = settings.smtp_from, mail.to, mail.subject

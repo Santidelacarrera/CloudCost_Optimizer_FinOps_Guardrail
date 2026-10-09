@@ -14,7 +14,24 @@ package cloudcost.guardrail
 
 import rego.v1
 
-destructive_types := {"aws_instance", "aws_ebs_volume", "aws_ebs_snapshot"}
+# Recursos que CloudCost puede proponer eliminar o redimensionar, por nube. Un tipo que no esté aquí NO está protegido por este guardrail:
+# al añadir un tipo nuevo a `TF_TYPES` (apps/api/cloudcost/domain/models.py) hay que añadirlo también aquí; una prueba lo comprueba.
+destructive_types := {
+	# AWS
+	"aws_instance", "aws_ebs_volume", "aws_ebs_snapshot", "aws_db_instance",
+	# Azure
+	"azurerm_linux_virtual_machine", "azurerm_windows_virtual_machine", "azurerm_managed_disk", "azurerm_snapshot",
+	# GCP
+	"google_compute_instance", "google_compute_disk", "google_compute_region_disk", "google_compute_snapshot",
+}
+
+# Tipos redimensionables y el atributo que fija su tamaño.
+size_attribute := {
+	"aws_instance": "instance_type",
+	"azurerm_linux_virtual_machine": "size",
+	"azurerm_windows_virtual_machine": "size",
+	"google_compute_instance": "machine_type",
+}
 
 prod_values := {"production", "prod", "prd", "live"}
 
@@ -25,14 +42,23 @@ changes contains rc if {
 	rc.type in destructive_types
 }
 
-# Entorno del recurso: lo que normaliza la API; si no hay contexto, se deduce de la etiqueta Environment.
+# Etiqueta de entorno declarada en el recurso: `Environment` (AWS/Azure) o `environment` (GCP, que usa labels en minúsculas).
+declared_environment(rc) := v if {
+	v := rc.change.before.tags.Environment
+} else := v if {
+	v := rc.change.before.tags.environment
+} else := v if {
+	v := rc.change.before.labels.environment
+}
+
+# Entorno del recurso: lo que normaliza la API; si no hay contexto, se deduce de la etiqueta declarada.
 # Un valor desconocido o ausente se trata como producción (la opción prudente).
 environment(rc) := env if {
 	env := input.cloudcost.environments[rc.address]
 } else := "production" if {
-	lower(rc.change.before.tags.Environment) in prod_values
+	lower(declared_environment(rc)) in prod_values
 } else := "non-production" if {
-	lower(rc.change.before.tags.Environment) in nonprod_values
+	lower(declared_environment(rc)) in nonprod_values
 } else := "unknown"
 
 is_prod(rc) if environment(rc) in {"production", "unknown"}
@@ -62,9 +88,9 @@ deny contains msg if {
 deny contains msg if {
 	some rc in changes
 	rc.change.actions == ["update"]
-	rc.type == "aws_instance"
+	attr := size_attribute[rc.type]
 	is_prod(rc)
-	rc.change.before.instance_type != rc.change.after.instance_type
+	rc.change.before[attr] != rc.change.after[attr]
 	not has_change_ticket(rc)
 	msg := sprintf("%s: el cambio de tamaño en producción requiere finops:change-ticket o citar el ticket (p. ej. CHG-1234) en el motivo de la aprobación", [rc.address])
 }

@@ -11,22 +11,24 @@ PR_CREATED = "PR_CREATED"
 MERGED = "MERGED"
 DEPLOYED = "DEPLOYED"
 VERIFIED = "VERIFIED"
+EXPIRED = "EXPIRED"        # ya no procede: el recurso desapareció o la condición dejó de cumplirse antes de aprobarla
 
-ALL_STATES = (DETECTED, ANALYZED, PROPOSED, PENDING_APPROVAL, APPROVED, REJECTED, PR_CREATED, MERGED, DEPLOYED, VERIFIED)
-TERMINAL_STATES = frozenset({REJECTED, VERIFIED})
+ALL_STATES = (DETECTED, ANALYZED, PROPOSED, PENDING_APPROVAL, APPROVED, REJECTED, PR_CREATED, MERGED, DEPLOYED, VERIFIED, EXPIRED)
+TERMINAL_STATES = frozenset({REJECTED, VERIFIED, EXPIRED})
 OPEN_STATES = frozenset({PENDING_APPROVAL, APPROVED, PR_CREATED, MERGED, DEPLOYED})   # oportunidad aún no verificada
 
 TRANSITIONS: dict[str, frozenset[str]] = {
     DETECTED: frozenset({ANALYZED}),
     ANALYZED: frozenset({PROPOSED}),
-    PROPOSED: frozenset({PENDING_APPROVAL}),
-    PENDING_APPROVAL: frozenset({APPROVED, REJECTED}),
+    PROPOSED: frozenset({PENDING_APPROVAL, EXPIRED}),
+    PENDING_APPROVAL: frozenset({APPROVED, REJECTED, EXPIRED}),
     APPROVED: frozenset({PR_CREATED, REJECTED}),       # se puede revocar antes de crear el PR
     PR_CREATED: frozenset({MERGED, APPROVED}),         # PR cerrado sin merge => vuelve a APPROVED
     MERGED: frozenset({DEPLOYED}),
     DEPLOYED: frozenset({VERIFIED}),
     REJECTED: frozenset(),
     VERIFIED: frozenset(),
+    EXPIRED: frozenset(),
 }
 
 

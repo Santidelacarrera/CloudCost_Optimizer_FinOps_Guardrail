@@ -13,7 +13,7 @@ from uuid import UUID
 
 from psycopg.types.json import Jsonb
 
-from .. import metrics
+from .. import metrics, redaction
 from ..collectors import get_collector
 from ..config import Settings
 from ..db import tenant_tx
@@ -26,7 +26,7 @@ from ..iac.patcher import PatchError, build_patch
 from ..iac.terraform import IacIndex
 from ..llm.advisor import advise
 from ..secrets import SecretResolver
-from . import audit
+from . import audit, lifecycle
 from .explain import build_explanation
 from .git_factory import get_git_provider
 from .recommendations import upsert_finding
@@ -171,6 +171,15 @@ on conflict (organization_id, cloud_account_id, resource_pk, usage_date, service
 do update set amount = excluded.amount, source = excluded.source
 """
 
+_ACCOUNT_COST_UPSERT = """
+insert into account_costs (organization_id, cloud_account_id, scan_id, provider, account_ref, service, service_raw, region,
+    granularity, period_start, period_end, amount, currency, metric, estimated, source)
+values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+on conflict (organization_id, cloud_account_id, service_raw, region, granularity, period_start, metric, currency)
+do update set amount = excluded.amount, estimated = excluded.estimated, scan_id = excluded.scan_id,
+              service = excluded.service, period_end = excluded.period_end, collected_at = now()
+"""
+
 
 def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: SecretResolver, llm_client=None,
              git_factory: Callable = get_git_provider, collector_factory: Callable = get_collector) -> dict[str, Any]:
@@ -186,10 +195,11 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
         account, secrets=secrets, demo_enabled=settings.demo_enabled,
         use_cost_explorer=settings.aws_cost_explorer_resources,
         cost_options={"cost_tag_key": settings.aws_cost_tag_key, "cost_history_months": settings.aws_cost_history_months,
-                      "cost_metric": settings.aws_cost_metric},
+                      "cost_metric": settings.aws_cost_metric,
+                      "ce_request_budget": settings.aws_ce_request_budget},
         on_api_error=lambda api: metrics.CLOUD_API_ERRORS.labels(account["provider"], api).inc())
     result = collector.collect()
-    warnings += result.warnings
+    warnings += [redaction.redact_text(w) for w in result.warnings]
 
     index = None
     if repo:
@@ -230,22 +240,39 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
                     (str(org_id), str(account["id"]), pk_by_rid[c.resource_id], account["provider"] if account["provider"] != "demo" else "aws",
                      c.usage_date, c.amount, c.service, c.region, c.source)
                     for c in result.costs if c.resource_id in pk_by_rid])
+        if result.account_costs:
+            with conn.cursor() as cur:
+                cur.executemany(_ACCOUNT_COST_UPSERT, [
+                    (str(org_id), str(account["id"]), str(scan_id), c.provider, c.account_ref, c.service, c.service_raw, c.region,
+                     c.granularity, c.period_start, c.period_end, c.amount, c.currency, c.metric, c.estimated, c.source)
+                    for c in result.account_costs])
+        busy = lifecycle.in_flight(conn, account["id"])
+        current_keys: set[str] = set()
+        keys_by_resource: dict[str, set[str]] = {}
         for item in prepared:
             f = item.finding
+            key = f.dedupe_key(str(account["id"]))
+            rpk = pk_by_rid[f.resource.resource_id]
+            current_keys.add(key)
+            keys_by_resource.setdefault(rpk, set()).add(key)
             up = upsert_finding(
                 conn, org_id, scan_id=scan_id, account_id=account["id"], repo_id=repo["id"] if repo else None,
-                resource_pk=pk_by_rid[f.resource.resource_id], finding=f, risk=item.risk, impact=item.impact,
-                priority=item.priority, decision=item.decision, explanation=item.explanation,
-                alternatives=item.alternatives, evidence=item.evidence, llm_advice=item.llm_advice,
-                dedupe_key=f.dedupe_key(str(account["id"])))
+                resource_pk=rpk, finding=f, risk=item.risk, impact=item.impact,
+                priority=item.priority, decision=lifecycle.block_if_in_flight(item.decision, key, busy.get(rpk)),
+                explanation=item.explanation, alternatives=item.alternatives, evidence=item.evidence, llm_advice=item.llm_advice,
+                dedupe_key=key)
             if up.created:
                 created += 1
                 metrics.RECOMMENDATIONS_GENERATED.labels(f.rule_id).inc()
                 metrics.ESTIMATED_SAVINGS_USD.inc(f.estimated_monthly_savings)
             elif up.rec_id:
                 updated += 1
-        stats = {"resources_seen": len(result.resources), "findings": len(prepared), "recommendations_created": created,
+        degraded = any(i.get("retryable") for i in result.issues)          # límites de solicitudes o red: «no lo vi» no es «ya no existe»
+        reconciled = lifecycle.reconcile(conn, org_id, account_id=account["id"], scan_id=scan_id, current_keys=current_keys,
+                                         keys_by_resource=keys_by_resource, partial=result.partial, degraded=degraded)
+        stats = {"resources_seen": len(result.resources), "reconciliation": reconciled.to_dict(), "findings": len(prepared), "recommendations_created": created,
                  "recommendations_updated": updated, "partial": result.partial, "warnings": warnings[:20],
+                 "issues": result.issues[:20], "data_quality": result.data_quality, "account_cost_rows": len(result.account_costs),
                  "estimated_monthly_savings": round(sum(i.finding.estimated_monthly_savings for i in prepared), 2),
                  "duration_seconds": round(time.monotonic() - started, 2)}
         conn.execute("update scans set status = 'SUCCEEDED', finished_at = now(), stats = %s where id = %s",
@@ -258,12 +285,12 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
 def mark_scan_failed(org_id: UUID, scan_id: UUID, error: str, *, status: str = "FAILED") -> None:
     with tenant_tx(org_id) as conn:
         conn.execute("update scans set status = %s, finished_at = now(), error = %s where id = %s",
-                     (status, error[:500], str(scan_id)))
+                     (status, redaction.redact_text(error)[:500], str(scan_id)))
         audit.record(conn, org_id, audit.SCAN_FAILED, entity_type="scan", entity_id=scan_id,
-                     payload={"status": status, "error": error[:500]})
+                     payload={"status": status, "error": redaction.redact_text(error)[:500]})
     metrics.SCANS_TOTAL.labels(status.lower()).inc()
 
 
 def mark_scan_retrying(org_id: UUID, scan_id: UUID, error: str) -> None:
     with tenant_tx(org_id) as conn:
-        conn.execute("update scans set status = 'QUEUED', error = %s where id = %s", (error[:500], str(scan_id)))
+        conn.execute("update scans set status = 'QUEUED', error = %s where id = %s", (redaction.redact_text(error)[:500], str(scan_id)))

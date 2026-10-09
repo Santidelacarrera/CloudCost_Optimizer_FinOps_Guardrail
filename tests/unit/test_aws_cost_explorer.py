@@ -98,7 +98,7 @@ class FakeSession:
     def __init__(self, ce):
         self.ce = ce
 
-    def client(self, name, region_name=None):
+    def client(self, name, region_name=None, **_):
         return {"ec2": FakeEC2(), "cloudwatch": FakeCW(), "cloudtrail": object(), "ce": self.ce}[name]
 
 
@@ -125,7 +125,7 @@ def test_normalize_resource_id_handles_arns_and_plain_ids():
 def test_monthly_estimate_uses_resource_age_when_younger_than_window():
     cost = aws_costs.ResourceCost([(TODAY - timedelta(days=i), 4.0) for i in range(1, 6)])   # 5 días de datos
     assert cost.monthly_estimate(30.0) == pytest.approx(120.0)
-    assert cost.monthly_estimate(30.0, age_days=3) == pytest.approx(5 * 4.0 / 3 * 30.0, rel=1e-3)
+    assert cost.monthly_estimate(30.0, age_days=3) == pytest.approx(3 * 4.0 / 3 * 30.0, rel=1e-3)   # solo cuentan los 3 días de vida
 
 
 def test_fetch_resource_costs_paginates_and_skips_no_resource_id():

@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable
 
+from .cost_quality import BLOCKING_FLAGS, CONFIDENCE_FLAGS, CONFIDENCE_PENALTY
+from .estimates import attach_estimate
 from .k8s import (
     DEFAULT_CPU_CORE_HOUR,
     DEFAULT_MEM_GIB_HOUR,
@@ -139,15 +141,24 @@ def _current_cost(res: NormalizedResource) -> float:
 VERIFIED_COST_SOURCES = frozenset({"cost_explorer", "import"})
 
 
+def _quality_flags(res: NormalizedResource) -> set[str]:
+    return set((res.attributes.get("cost_basis") or {}).get("quality_flags") or [])
+
+
+def _cost_is_verified(res: NormalizedResource) -> bool:
+    """Real (Cost Explorer/importación) y sin créditos ni reembolsos en la serie, que la hacen no representativa."""
+    return res.cost_source in VERIFIED_COST_SOURCES and not (_quality_flags(res) & BLOCKING_FLAGS)
+
+
 def _cost_unverified(res: NormalizedResource, cfg: RuleConfig) -> bool:
-    return cfg.require_verified_cost and res.cost_source not in VERIFIED_COST_SOURCES
+    return cfg.require_verified_cost and not _cost_is_verified(res)
 
 
 def _cost_basis(res: NormalizedResource) -> dict[str, Any]:
     """Origen del costo usado para calcular el ahorro: real (Cost Explorer/importación) o estimado por tabla de precios."""
     basis = dict(res.attributes.get("cost_basis") or {})
     basis.setdefault("source", res.cost_source)
-    basis["verified"] = res.cost_source in VERIFIED_COST_SOURCES
+    basis["verified"] = _cost_is_verified(res)
     history = res.attributes.get("cost_history")
     if history:
         basis["history"] = {k: history[k] for k in ("scope", "tag_key", "tag_value", "monthly", "trend_pct") if k in history}
@@ -218,6 +229,9 @@ def rule_ec2_downsize(res: NormalizedResource, cfg: RuleConfig) -> Finding | Non
         current_monthly_cost=round(cost, 2), projected_monthly_cost=round(cost - savings, 2),
         estimated_monthly_savings=savings, confidence=_clamp(confidence),
         params={"current_instance_type": spec.name, "target_instance_type": best.target.name},
+        # El tipo destino cambia con las métricas de cada escaneo: la identidad es «reducir ESTA instancia», no «a este tipo»,
+        # para no acumular recomendaciones incompatibles sobre el mismo recurso.
+        stable_key={"resource_id": res.resource_id, "change": "resize"},
         evidence={
             "cpu_avg": res.cpu_avg, "cpu_max": res.cpu_max, "memory_avg": res.memory_avg,
             "observation_days": res.observation_days, "environment": res.environment,
@@ -484,11 +498,33 @@ Rule = Callable[[NormalizedResource, RuleConfig], "Finding | None"]
 RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old, rule_rds_idle, rule_k8s_overprovisioned]
 
 
+# Una recomendación ya cubre a otras sobre el mismo recurso: la destructiva sustituye a la de reducir (queda como alternativa).
+SUPERSEDES: dict[str, frozenset[str]] = {"ec2_idle": frozenset({"ec2_downsize"})}
+
+
+def _finalize(f: Finding, res: NormalizedResource) -> Finding:
+    """Fundamento de la cifra y ajustes de confianza explicables (calidad del coste, coste atípico)."""
+    block = attach_estimate(f, res)
+    adjustments: list[dict[str, Any]] = []
+    flags = _quality_flags(res) & CONFIDENCE_FLAGS
+    if flags:
+        adjustments.append({"reason": "cost_quality:" + ",".join(sorted(flags)), "delta": -CONFIDENCE_PENALTY})
+    check = block["reference"].get("vs_price_table")
+    if check and check["outlier"]:
+        adjustments.append({"reason": f"cost_outlier_vs_price_table:{check['ratio']}", "delta": -CONFIDENCE_PENALTY})
+        block["assumptions"].append(
+            f"El coste real ({block['reference']['monthly_cost']:.2f}) es {check['ratio']}× el de la tabla de precios "
+            f"({check['table_monthly_cost']:.2f}): puede incluir licencias, transferencia, créditos o un pico; revísalo antes de aprobar.")
+    if adjustments:
+        f.confidence = _clamp(f.confidence + sum(a["delta"] for a in adjustments))
+        f.evidence["confidence_adjustments"] = adjustments
+    return f
+
+
 def evaluate_resource(res: NormalizedResource, cfg: RuleConfig) -> list[Finding]:
     findings = [f for rule in RULES if (f := rule(res, cfg))]
-    # Resolución de conflictos: una instancia ociosa ya cubre el resize (queda como alternativa).
-    if any(f.rule_id == "ec2_idle" for f in findings):
-        findings = [f for f in findings if f.rule_id != "ec2_downsize"]
+    covered = {r for f in findings for r in SUPERSEDES.get(f.rule_id, ())}
+    findings = [_finalize(f, res) for f in findings if f.rule_id not in covered]
     return findings
 
 

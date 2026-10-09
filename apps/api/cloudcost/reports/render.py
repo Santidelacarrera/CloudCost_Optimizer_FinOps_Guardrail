@@ -15,6 +15,7 @@ PDF_MIME = "application/pdf"
 
 ENV_LABELS = {"production": "Producción", "staging": "Preproducción", "development": "Desarrollo", "test": "Pruebas",
               "unknown": "Sin clasificar"}
+METHOD_LABELS = {"cost_records_controlled": "Medido (controlado)", "cost_records": "Costos reales", "manual": "Declarado"}
 COST_SOURCE_LABELS = {"cost_explorer": "Real (Cost Explorer)", "import": "Real (archivo importado)",
                       "estimate": "Estimado (tabla de precios)", "estimate_upper_bound": "Estimado (cota superior)",
                       "demo": "Datos de demostración"}
@@ -155,6 +156,39 @@ def render_xlsx(data: dict[str, Any]) -> bytes:
     for r, text in enumerate(notes, 18):
         ws.cell(row=r, column=1, value=text).font = bold if r == 18 else Font(name="Arial", size=9, color=ink)
 
+    bd = data.get("breakdown")
+    if bd:
+        r0 = 18 + len(notes) + 2
+        ws.cell(row=r0, column=1, value="Estimado · aprobado · observado (tres cifras distintas: no se suman)").font = Font(name="Arial", size=12, bold=True, color=ink)
+        for c, h in enumerate(("Cifra", "USD/mes", "Qué es y qué no es"), 1):
+            cell = ws.cell(row=r0 + 1, column=c, value=h)
+            cell.font, cell.fill = white, head_fill
+        obs = bd["observed"]
+        lines = [
+            (f"Estimado, sin decidir ({bd['estimated']['count']})", bd["estimated"]["monthly"],
+             "Ahorro calculado por las reglas para recomendaciones que aún nadie ha aprobado. Es una proyección."),
+            (f"Aprobado, sin verificar ({bd['approved']['count']})", bd["approved"]["monthly"],
+             "La cifra que vieron quienes aprobaron, congelada. Sigue siendo una proyección hasta que se despliegue y se mida."),
+            (f"Observado atribuible al cambio ({obs['attributed_count']})", obs["attributed"],
+             "Medido con costos facturados, con períodos alineados y controles de uso. Compatible con el cambio; no prueba causalidad."),
+            ("Observado no atribuible solo al cambio", obs["confounded"],
+             "Medido con facturación, pero el uso o el resto del servicio se movieron en el mismo período."),
+            ("Observado declarado o sin facturación", obs["declared"],
+             "Cifra introducida a mano o calculada con la tabla de precios: no es una observación."),
+        ]
+        for i, (label, value, note) in enumerate(lines, r0 + 2):
+            ws.cell(row=i, column=1, value=label).font = bold
+            cell = ws.cell(row=i, column=2, value=value)
+            cell.number_format, cell.font = usd_fmt, input_blue
+            cell.alignment = Alignment(horizontal="right")
+            ws.cell(row=i, column=3, value=note).font = Font(name="Arial", size=9, color="6B7280")
+            for c in (1, 2, 3):
+                ws.cell(row=i, column=c).border = box
+        rr = r0 + 2 + len(lines)
+        ws.cell(row=rr, column=1, value="Realización (solo observado atribuible)").font = bold
+        ws.cell(row=rr, column=2, value=(obs["realization_pct_attributed"] / 100 if obs["realization_pct_attributed"] is not None else "n/d")).number_format = pct_fmt
+        ws.cell(row=rr, column=3, value="Observado atribuible ÷ lo aprobado de esas mismas recomendaciones.").font = Font(name="Arial", size=9, color="6B7280")
+
     # ---------------------------------------------------------------- Desglose
     wd = wb.create_sheet("Desglose", 1)
     wd.sheet_view.showGridLines = False
@@ -190,8 +224,9 @@ def render_xlsx(data: dict[str, Any]) -> bytes:
 
     # ---------------------------------------------------------------- Ahorro verificado
     wv = wb.create_sheet("Ahorro verificado")
-    for c, (h, w) in enumerate((("Recomendación", 58), ("Esperado/mes (USD)", 20), ("Observado/mes (USD)", 20),
-                                ("Realización", 14), ("Método", 14), ("Ventana", 24)), 1):
+    for c, (h, w) in enumerate((("Recomendación", 58), ("Aprobado/mes (USD)", 20), ("Observado ajustado/mes (USD)", 24),
+                                ("Realización", 14), ("Método", 16), ("Ventana", 24), ("Lectura", 30), ("Confianza", 12),
+                                ("Diferencia bruta/mes (USD)", 22), ("Otros factores", 40)), 1):
         cell = wv.cell(row=1, column=c, value=h)
         cell.font, cell.fill = white, head_fill
         wv.column_dimensions[get_column_letter(c)].width = w
@@ -200,9 +235,14 @@ def render_xlsx(data: dict[str, Any]) -> bytes:
         wv.cell(row=r, column=2, value=v["expected_monthly_savings"]).number_format = usd_fmt
         wv.cell(row=r, column=3, value=v["observed_monthly_savings"]).number_format = usd_fmt
         wv.cell(row=r, column=4, value=f'=IF(B{r}>0,C{r}/B{r},"n/d")').number_format = "0%"
-        wv.cell(row=r, column=5, value="Costos reales" if v["method"] == "cost_records" else "Manual").font = base
+        wv.cell(row=r, column=5, value=METHOD_LABELS.get(v["method"], v["method"])).font = base
         win = f"{v['window_start']} a {v['window_end']}" if v.get("window_start") else ""
         wv.cell(row=r, column=6, value=win).font = base
+        wv.cell(row=r, column=7, value=v.get("attribution_label", "")).font = base
+        wv.cell(row=r, column=8, value=v.get("grade_label", "")).font = base
+        raw = wv.cell(row=r, column=9, value=v.get("raw_observed_monthly_savings"))
+        raw.number_format, raw.font = usd_fmt, input_blue
+        wv.cell(row=r, column=10, value=", ".join(v.get("confounders") or [])).font = base
         for c in (2, 3, 4):
             wv.cell(row=r, column=c).font = input_blue if c < 4 else base
     wv.freeze_panes = "A2"
@@ -288,6 +328,26 @@ def render_pdf(data: dict[str, Any]) -> bytes:
                               ("VALIGN", (0, 0), (-1, -1), "TOP"), ("TOPPADDING", (0, 0), (-1, -1), 8),
                               ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     story += [kpis, Spacer(1, 4 * mm)]
+    bd = data.get("breakdown")
+    if bd:
+        obs = bd["observed"]
+        rows = [[Paragraph("Cifra (nunca se suman entre sí)", head), Paragraph("Recom.", head_r), Paragraph("USD/mes", head_r)],
+                [Paragraph("<b>Estimado</b>, sin decidir: proyección de las reglas", cell), Paragraph(str(bd["estimated"]["count"]), cell_r),
+                 Paragraph(money(bd["estimated"]["monthly"]), cell_r)],
+                [Paragraph("<b>Aprobado</b>, sin verificar: la cifra que vieron quienes aprobaron", cell), Paragraph(str(bd["approved"]["count"]), cell_r),
+                 Paragraph(money(bd["approved"]["monthly"]), cell_r)],
+                [Paragraph("<b>Observado</b> atribuible al cambio (facturación, períodos alineados, controles de uso)", cell),
+                 Paragraph(str(obs["attributed_count"]), cell_r), Paragraph(money(obs["attributed"]), cell_r)],
+                [Paragraph("Observado no atribuible solo al cambio (otros factores se movieron)", cell), Paragraph("", cell_r),
+                 Paragraph(money(obs["confounded"]), cell_r)],
+                [Paragraph("Observado declarado o sin facturación (no es una observación)", cell), Paragraph("", cell_r),
+                 Paragraph(money(obs["declared"]), cell_r)]]
+        story += [Spacer(1, 4 * mm), Paragraph("Estimado, aprobado y observado", h2),
+                  _table(rows, [110 * mm, 20 * mm, 40 * mm], ink, line, paper),
+                  Paragraph("El ahorro <b>observado</b> compara la facturación de las 2 semanas previas con la de las semanas posteriores al despliegue, "
+                            "sin los días de transición ni los últimos con retraso, y corrige por los días en que el recurso estuvo activo. "
+                            "Es compatible con el cambio pero <b>no demuestra que lo causara</b>: compromisos (Reserved Instances, Savings Plans), "
+                            "créditos y cambios de carga pueden mover el coste por su cuenta.", small)]
     story.append(Paragraph(
         f"Hay <b>{k['recommendations']}</b> recomendaciones abiertas: <b>{k['pending_approval']}</b> esperan aprobación y "
         f"<b>{k['high_risk']}</b> son de riesgo alto (requieren aprobación reforzada). Ningún cambio se aplica sin Pull Request y "
@@ -355,11 +415,13 @@ def render_pdf(data: dict[str, Any]) -> bytes:
     # ---- verificado
     if data["verified"]:
         story.append(Paragraph("Ahorro verificado tras el despliegue", h2))
-        rows = [[Paragraph("Recomendación", head), Paragraph("Esperado/mes", head_r), Paragraph("Observado/mes", head_r), Paragraph("Real.", head_r)]]
+        rows = [[Paragraph("Recomendación", head), Paragraph("Aprobado/mes", head_r), Paragraph("Observado/mes", head_r),
+                 Paragraph("Real.", head_r), Paragraph("Lectura", head)]]
         for v in data["verified"][:10]:
             rows.append([Paragraph(_esc(v["title"]), cell), Paragraph(money(v["expected_monthly_savings"]), cell_r),
-                         Paragraph(money(v["observed_monthly_savings"]), cell_r), Paragraph(pct(v["realization_pct"], 0), cell_r)])
-        story.append(_table(rows, [80 * mm, 32 * mm, 32 * mm, 22 * mm], ink, line, paper))
+                         Paragraph(money(v["observed_monthly_savings"]), cell_r), Paragraph(pct(v["realization_pct"], 0), cell_r),
+                         Paragraph(_esc(v.get("attribution_label", METHOD_LABELS.get(v["method"], ""))), cell)])
+        story.append(_table(rows, [56 * mm, 26 * mm, 26 * mm, 16 * mm, 46 * mm], ink, line, paper))
 
     # ---- método y límites
     story.append(KeepTogether([

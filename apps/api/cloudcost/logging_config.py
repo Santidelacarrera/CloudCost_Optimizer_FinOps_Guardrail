@@ -6,6 +6,8 @@ import logging
 import sys
 from datetime import datetime, timezone
 
+from . import redaction
+
 _RESERVED = set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime"}
 
 
@@ -20,7 +22,10 @@ class JsonFormatter(logging.Formatter):
         payload.update({k: v for k, v in record.__dict__.items() if k not in _RESERVED and not k.startswith("_")})
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
-        return json.dumps(payload, default=str, ensure_ascii=False)
+        if record.stack_info:
+            payload["stack"] = record.stack_info
+        # Defensa en profundidad: ningún secreto reconocible sale en el log aunque algún código lo registre por descuido.
+        return json.dumps(redaction.redact_obj(payload), default=str, ensure_ascii=False)
 
 
 def configure_logging(level: str = "INFO") -> None:

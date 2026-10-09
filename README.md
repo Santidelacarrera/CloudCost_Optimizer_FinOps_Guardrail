@@ -74,7 +74,7 @@ CloudCost adopta una postura distinta: **la plataforma nunca escribe en la nube.
 | Aprobación en un chat | Máquina de estados con aprobación reforzada (dos personas, una con rol ADMIN/SRE) para cambios destructivos en producción |
 | Políticas que dependen del CI del cliente | Políticas **OPA/Rego evaluadas por la propia plataforma antes de crear el PR**, fallando cerrado |
 | Log de actividad editable | Auditoría **append-only encadenada por hash**, verificable por API y tras cada restauración de copia |
-| «Ahorramos X» | Verificación posterior: ahorro esperado vs. observado tras el despliegue |
+| «Ahorramos X» | Verificación posterior: ahorro **estimado, aprobado y observado** por separado; el observado se mide con facturación (períodos alineados, control de uso) y declara sus límites |
 
 ---
 
@@ -133,7 +133,7 @@ Reglas deterministas, explicables y con umbrales configurables (`RuleConfig`); n
 | `rds_idle` | Base de datos RDS sin conexiones y CPU en reposo toda la ventana *(hoy solo con datos de demostración: el colector real de AWS aún no inventaría RDS)* | Eliminar *(destructiva)* |
 | `k8s_overprovisioned` | Workload con *requests* de CPU/memoria muy por encima del uso | Ajustar `values.yaml` de Helm |
 
-El **ahorro** se calcula con el **costo real de cada recurso** (Cost Explorer a nivel de recurso en AWS) y, si no está disponible, con una tabla de precios marcada como *«Costo ESTIMADO»*. Una política estricta (`require_verified_cost`) impide proponer apagar o reducir recursos cuyo costo solo sea estimado.
+Cada cifra lleva su **fórmula, coste de referencia, fecha y supuestos** ([metodología](docs/savings-methodology.md)), con evidencia versionada cuya huella queda en la auditoría. El **ahorro** se calcula con el **costo real de cada recurso** (Cost Explorer a nivel de recurso en AWS) y, si no está disponible, con una tabla de precios marcada como *«Costo ESTIMADO»*. Una política estricta (`require_verified_cost`) impide proponer apagar o reducir recursos cuyo costo solo sea estimado.
 
 ---
 
@@ -241,11 +241,11 @@ El diseño de seguridad asume un entorno hostil y opera bajo el principio de **F
 
 ## Calidad y CI
 
-Más de 370 pruebas entre unitarias, de integración contra **PostgreSQL real** y de punta a punta con navegador (Playwright). Cada PR ejecuta:
+Más de 600 pruebas entre unitarias, de integración contra **PostgreSQL real** y de punta a punta con navegador (Playwright). Cada PR ejecuta:
 
 | Job | Qué valida |
 |---|---|
-| `api` | `ruff`, migraciones, `pytest` (incluye aislamiento RLS, matriz de rutas/roles, auditoría y OPA real) |
+| `api` | `ruff`, migraciones, `pytest` (incluye aislamiento RLS y por API en ambos sentidos, matriz de rutas/roles, auditoría con concurrencia y manipulación, secretos en logs/errores/trazas, PR sin ejecución y OPA real) |
 | `web` | `tsc --noEmit` y `next build` |
 | `e2e` | Pila completa en Docker con navegador real y buzón de correo de prueba (cuenta, 2FA, passkeys, informes, gráfico, cabeceras de seguridad) |
 | `policies` | `opa check --strict`, `opa fmt` y `opa test` de las políticas Rego; `terraform validate` de los módulos de solo lectura |
@@ -271,6 +271,7 @@ Las variables completas están comentadas en [`.env.example`](.env.example) y [`
 | `OPA_MODE` | `enforce` · `audit` · `off` | `audit` en desarrollo, `enforce` en producción |
 | `GITHUB_TOKEN` / `GITLAB_TOKEN` + secretos de webhook | Proveedores Git | — |
 | `AWS_COST_EXPLORER_RESOURCES`, `AWS_COST_TAG_KEY` | Costo real por recurso e historial por etiqueta | `true` / — |
+| `AWS_CE_REQUEST_BUDGET` | Tope de solicitudes a Cost Explorer por escaneo (cada una cuesta USD 0,01) | `60` |
 | `LLM_ENABLED`, `LLM_PROVIDER` | Asesor opcional (OpenAI o Gemini) | `false` |
 | `DEMO_ENABLED` | Colector y proveedor Git de demostración | `true` (prohibido en producción) |
 | `SMTP_*`, `PUBLIC_WEB_URL` | Correo transaccional y URL pública (HTTPS en producción) | — |
@@ -319,10 +320,10 @@ Sin `DATABASE_URL` / `DATABASE_ADMIN_URL` las pruebas de integración se omiten 
 
 Esto es lo que **no** está verificado, dicho sin adornos (detalle en [docs/roadmap-status.md](docs/roadmap-status.md)):
 
-- **Contra sistemas reales:** el colector de AWS, Azure, GCP y Kubernetes se probó con respuestas simuladas y datos de demostración/importados; **falta una prueba con cuentas reales**. SSO nunca se ejecutó contra un tenant real de Entra ID u Okta (hay una lista de comprobación en [docs/sso.md](docs/sso.md)). Passkeys solo con autenticadores de software y el virtual de Chromium: sin llaves físicas ni Safari/Firefox.
+- **Contra sistemas reales:** el colector de AWS (inventario EC2/EBS/snapshots, coste por recurso y coste de la cuenta por servicio/región) se prueba con respuestas **validadas por el modelo oficial de la API**, y existe la herramienta para validarlo contra una cuenta de laboratorio con informe reproducible (`python -m cloudcost.cli aws-lab`, [guía](docs/aws-lab-validation.md)); **todavía no se ha ejecutado contra una cuenta real** (registro en esa guía). Azure, GCP y Kubernetes se probaron solo con respuestas simuladas; **falta una prueba con cuentas reales**. Tabla de lo soportado y su nivel de verificación: [docs/supported-services.md](docs/supported-services.md). SSO nunca se ejecutó contra un tenant real de Entra ID u Okta (hay una lista de comprobación en [docs/sso.md](docs/sso.md)). Passkeys solo con autenticadores de software y el virtual de Chromium: sin llaves físicas ni Safari/Firefox.
 - **Sin pentest humano** (ver [Seguridad](#seguridad)).
 - **Cobertura de inventario:** el colector real de AWS lee EC2, EBS y snapshots; RDS y otros servicios solo existen hoy en la demostración.
-- **Verificación de ahorro** compara costos posteriores con la estimación; no sustituye a una conciliación de facturación.
+- **Ahorro observado:** compara facturación previa y posterior con períodos alineados y control de uso, pero la facturación no demuestra causalidad (Savings Plans, créditos y cambios de carga lo alteran); no sustituye a una conciliación. El informe de demostración usa datos **sintéticos** ([ejemplo](docs/demo/informe-ahorro-demo.md)). Las recomendaciones de AWS (Trusted Advisor, Cost Optimization Hub) no se integran: [ADR-0003](docs/adr/0003-external-recommendation-sources.md).
 - **Alcance de IaC:** Terraform (literales) y `values.yaml` de Helm; no hay parches para CDK, Pulumi, Bicep ni manifiestos YAML sueltos.
 - **Operación pendiente de tu lado:** dominio y servidor, SMTP con SPF/DKIM/DMARC, revisión legal de `/terms` y `/privacy`, ensayo de restauración y monitor externo ([lista de lanzamiento](docs/launch-checklist.md)).
 - Un mismo *pepper* firma todo el estado criptográfico de contraseñas y TOTP: guárdalo fuera del servidor ([rotación](docs/pepper-rotation.md)).
@@ -335,6 +336,7 @@ Esto es lo que **no** está verificado, dicho sin adornos (detalle en [docs/road
 |---|---|
 | **Diseño** | [Arquitectura](docs/architecture.md) · [ADRs](docs/adr/) · [Seguridad](docs/security.md) · [Estado de la hoja de ruta](docs/roadmap-status.md) |
 | **Operación** | [Runbook](docs/runbook.md) · [Despliegue](docs/deployment.md) · [Correo](docs/email.md) · [Lista de lanzamiento](docs/launch-checklist.md) · [Rotación del pepper](docs/pepper-rotation.md) |
+| **Calidad del ahorro** | [Metodología](docs/savings-methodology.md) · [Qué está soportado](docs/supported-services.md) · [Validación en cuenta de laboratorio](docs/aws-lab-validation.md) · [Informe de demostración (sintético)](docs/demo/informe-ahorro-demo.md) |
 | **Integraciones** | [AWS](docs/onboarding-aws.md) · [Azure y GCP](docs/onboarding-azure-gcp.md) · [Kubernetes/Helm](docs/kubernetes-helm.md) · [Políticas OPA](docs/policies.md) · [SSO](docs/sso.md) · [Passkeys](docs/passkeys.md) |
 | **Seguridad externa** | [Alcance](docs/pentest/scope.md) · [Modelo de amenazas](docs/pentest/threat-model.md) · [Checklist](docs/pentest/checklist.md) |
 

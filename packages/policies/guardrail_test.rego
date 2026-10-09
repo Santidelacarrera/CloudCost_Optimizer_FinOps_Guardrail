@@ -120,3 +120,67 @@ test_reinforced_approval_must_be_exactly_true if {
 	count(guardrail.deny) == 1 with input as {"resource_changes": [d], "cloudcost": {"reinforced_approval": "yes"}}
 	count(guardrail.deny) == 1 with input as {"resource_changes": [d], "cloudcost": {"reinforced_approval": null}}
 }
+
+# ---------------------------------------------------------------- todas las nubes y las bases de datos (antes quedaban SIN proteger)
+test_delete_prod_database_denied if {
+	r := delete_change("aws_db_instance.orders", "aws_db_instance", {"Environment": "production"})
+	count(guardrail.deny) == 1 with input as {"resource_changes": [r]}
+}
+
+test_delete_dev_database_allowed if {
+	r := delete_change("aws_db_instance.orders", "aws_db_instance", {"Environment": "dev"})
+	count(guardrail.deny) == 0 with input as {"resource_changes": [r]}
+}
+
+test_every_destructive_type_is_protected_in_production if {
+	every typ in guardrail.destructive_types {
+		count(guardrail.deny) == 1 with input as {"resource_changes": [delete_change(concat(".", [typ, "x"]), typ, {"Environment": "production"})]}
+	}
+}
+
+test_every_destructive_type_may_be_deleted_in_development if {
+	every typ in guardrail.destructive_types {
+		count(guardrail.deny) == 0 with input as {"resource_changes": [delete_change(concat(".", [typ, "x"]), typ, {"Environment": "dev"})]}
+	}
+}
+
+test_azure_and_gcp_resize_in_prod_needs_ticket if {
+	az := {"address": "azurerm_linux_virtual_machine.a", "type": "azurerm_linux_virtual_machine", "change": {
+		"actions": ["update"],
+		"before": {"size": "Standard_D8s_v5", "tags": {"Environment": "production"}},
+		"after": {"size": "Standard_D4s_v5", "tags": {"Environment": "production"}},
+	}}
+	gcp := {"address": "google_compute_instance.g", "type": "google_compute_instance", "change": {
+		"actions": ["update"],
+		"before": {"machine_type": "n2-standard-8", "labels": {"environment": "production"}},
+		"after": {"machine_type": "n2-standard-4", "labels": {"environment": "production"}},
+	}}
+	count(guardrail.deny) == 1 with input as {"resource_changes": [az]}
+	count(guardrail.deny) == 1 with input as {"resource_changes": [gcp]}
+	count(guardrail.deny) == 0 with input as {"resource_changes": [az, gcp], "cloudcost": {"change_ticket": "CHG-5"}}
+}
+
+test_gcp_labels_define_the_environment if {
+	prod := {"address": "google_compute_disk.d", "type": "google_compute_disk", "change": {"actions": ["delete"], "before": {"labels": {"environment": "production"}}, "after": null}}
+	dev := {"address": "google_compute_disk.d", "type": "google_compute_disk", "change": {"actions": ["delete"], "before": {"labels": {"environment": "dev"}}, "after": null}}
+	count(guardrail.deny) == 1 with input as {"resource_changes": [prod]}
+	count(guardrail.deny) == 0 with input as {"resource_changes": [dev]}
+}
+
+test_lowercase_environment_tag_is_recognised if {
+	r := delete_change("azurerm_managed_disk.m", "azurerm_managed_disk", {"environment": "dev"})
+	count(guardrail.deny) == 0 with input as {"resource_changes": [r]}
+}
+
+# ---------------------------------------------------------------- varios cambios en un mismo plan
+test_each_violating_change_is_reported_separately if {
+	a := delete_change("aws_instance.a", "aws_instance", {"Environment": "production"})
+	b := delete_change("aws_db_instance.b", "aws_db_instance", {"Environment": "production"})
+	c := delete_change("aws_instance.c", "aws_instance", {"Environment": "dev"})
+	count(guardrail.deny) == 2 with input as {"resource_changes": [a, b, c]}
+}
+
+test_replace_counts_as_delete if {
+	r := {"address": "aws_instance.x", "type": "aws_instance", "change": {"actions": ["delete", "create"], "before": {"tags": {"Environment": "production"}}, "after": {}}}
+	count(guardrail.deny) == 1 with input as {"resource_changes": [r]}
+}

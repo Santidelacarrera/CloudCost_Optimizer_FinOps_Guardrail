@@ -40,7 +40,7 @@ def _tf_block(start: str, end: str) -> set[str]:
 def test_las_acciones_de_inventario_son_las_mismas_que_en_terraform():
     inventory = next(st for cond, st in _cfn_statements() if cond is None)
     tf = _tf_block('sid = "ReadInventoryAndMetrics"', 'dynamic "statement"')
-    assert set(inventory["Action"]) == tf and len(tf) >= 10
+    assert set(inventory["Action"]) == tf and len(tf) >= 7
 
 
 def test_las_acciones_de_cost_explorer_son_las_mismas_que_en_terraform_y_son_condicionales():
@@ -57,7 +57,7 @@ def test_solo_lectura_ninguna_accion_de_escritura_ni_comodines():
         service, verb = action.split(":")
         assert "*" not in action, action
         assert re.match(r"^(Describe|Get|List|Lookup)", verb), f"{action} no es una acción de lectura"
-        assert service in {"ec2", "cloudwatch", "cloudtrail", "backup", "dlm", "ce"}
+        assert service in {"ec2", "cloudwatch", "cloudtrail", "ce"}
     assert all(st["Effect"] == "Allow" for _, st in _cfn_statements())
 
 
@@ -133,3 +133,12 @@ def test_launch_info_completo_y_exige_configuracion():
         onboarding.launch_info(template_url=TEMPLATE_URL, principal_arn=None, region="us-east-1")
     with pytest.raises(onboarding.OnboardingError):
         onboarding.launch_info(template_url=None, principal_arn=PRINCIPAL, region="us-east-1")
+
+
+def test_los_permisos_concedidos_son_exactamente_las_operaciones_que_el_colector_puede_llamar():
+    """Mínimo privilegio verificable: ni una acción IAM sin usar ni una operación permitida sin permiso (guardia ↔ TF ↔ CFN)."""
+    from cloudcost.collectors.aws_guard import required_iam_actions
+
+    cfn = {a for _, st in _cfn_statements() for a in st["Action"]}
+    tf = _tf_block('sid = "ReadInventoryAndMetrics"', 'dynamic "statement"') | _tf_block('sid       = "ReadCosts"', "resource \"aws_iam_role_policy\"")
+    assert cfn == tf == required_iam_actions()

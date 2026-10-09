@@ -31,4 +31,7 @@ Estándar: 1 aprobador (ADMIN/FINOPS/SRE). Reforzada (destructiva en producción
 Cambia solo el literal necesario (texto exacto) y se niega si hay drift entre IaC y nube, valores no literales, `count`/`for_each` o referencias desde otros recursos. Si el original parsea con `python-hcl2`, el resultado también debe parsear.
 
 ## Verificación de ahorro
-Tras `DEPLOYED`, compara el ahorro esperado con el observado (costos posteriores ≥ 7 días o valor aportado) y guarda el % de realización.
+Tras `DEPLOYED`, mide el ahorro con los costes facturados (ventanas alineadas, control de uso y del resto de la cuenta) y lo compara con el **aprobado**; un valor escrito a mano queda como *declarado*. Ver [savings-methodology.md](savings-methodology.md).
+
+## Estimado, aprobado y observado
+Tres cifras separadas, nunca sumadas. Hay además un estado `EXPIRED` (el recurso o la condición dejó de existir antes de aprobar) y marcas de obsolescencia en las aprobadas.

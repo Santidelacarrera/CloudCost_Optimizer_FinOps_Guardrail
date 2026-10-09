@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from datetime import date, timedelta
+from datetime import date, datetime, time, timezone
 from typing import Any, Callable
 
 import psycopg.errors
@@ -14,19 +14,19 @@ from .. import guardrail, metrics
 from ..config import Settings
 from ..domain import policy as pol
 from ..domain import state_machine as sm
+from ..domain.measurement import InsufficientData
 from ..domain.models import NormalizedResource
-from ..domain.savings import compute_realization, monthly_from_window
+from ..domain.savings import compute_realization
 from ..git import pr_body
 from ..git.base import GitProvider, GitProviderError
 from ..iac.patcher import PatchError, build_patch
 from ..iac.terraform import IacIndex
 from ..secrets import SecretResolver
 from ..security import Principal
-from . import audit
+from . import audit, savings_measurement
+from . import evidence as evidence_store
 from .git_factory import get_git_provider
 from .recommendations import WorkflowError, get_detail, transition
-
-MIN_VERIFICATION_DAYS = 7
 
 
 def ensure_user(conn: Connection, p: Principal):
@@ -62,12 +62,18 @@ def decide(conn: Connection, p: Principal, rec_id, decision: str, reason: str, e
             raise WorkflowError(409, f"No se puede aprobar una recomendación en estado {rec['status']}", "invalid_state")
         if not policy_data.get("allowed", False):
             raise WorkflowError(409, "Bloqueada por política: " + "; ".join(policy_data.get("blocked_reasons", [])), "policy_blocked")
+        res = conn.execute("select active from resources where id = %s", (str(rec["resource_pk"]),)).fetchone()
+        if res is not None and not res["active"]:
+            raise WorkflowError(409, "El recurso ya no aparece en el último inventario: no se puede aprobar un cambio sobre algo que no existe",
+                                "resource_gone")
     elif rec["status"] not in (sm.PENDING_APPROVAL, sm.APPROVED):
         raise WorkflowError(409, f"No se puede rechazar una recomendación en estado {rec['status']}", "invalid_state")
 
     user_id = ensure_user(conn, p)
+    snap = evidence_store.ensure_for(conn, p.org_id, rec)            # la huella de lo que ve quien decide queda en su aprobación y en la auditoría
     context = {"estimated_monthly_savings": float(rec["estimated_monthly_savings"]), "risk": rec["risk"],
-               "confidence": float(rec["confidence"]), "status": rec["status"], "approvals_required": rec["approvals_required"]}
+               "confidence": float(rec["confidence"]), "status": rec["status"], "approvals_required": rec["approvals_required"],
+               "evidence_hash": snap.hash, "evidence_id": str(snap.id)}
     try:
         conn.execute(
             """insert into approvals (organization_id, recommendation_id, user_id, approver_role, decision, reason,
@@ -93,7 +99,12 @@ def decide(conn: Connection, p: Principal, rec_id, decision: str, reason: str, e
                  payload={"reason": reason, "version": rec["version"], "role": p.role, "approvals": len(roles),
                           "required": rec["approvals_required"], "final": final, **context})
     if final:
-        transition(conn, p.org_id, rec_id, sm.PENDING_APPROVAL, sm.APPROVED, actor, "Aprobaciones requeridas completas")
+        # Se congela lo que vieron quienes aprobaron: ahorro, coste de referencia y evidencia. Los escaneos posteriores no los tocan.
+        transition(conn, p.org_id, rec_id, sm.PENDING_APPROVAL, sm.APPROVED, actor, "Aprobaciones requeridas completas",
+                   set_sql="approved_monthly_savings = %s, approved_baseline_cost = %s, approved_at = now(), approved_evidence_id = %s",
+                   set_params=(rec["estimated_monthly_savings"], rec["current_monthly_cost"], str(snap.id)))
+        res_row = conn.execute("select * from resources where id = %s", (str(rec["resource_pk"]),)).fetchone()
+        savings_measurement.capture_baseline(conn, p.org_id, rec, res_row, phase="approval", as_of=date.today(), created_by=p.user_id, actor=actor)
         metrics.RECOMMENDATIONS_APPROVED.inc()
     return {"status": sm.APPROVED if final else sm.PENDING_APPROVAL, "approvals": len(roles),
             "approvals_required": rec["approvals_required"]}
@@ -240,56 +251,86 @@ def mark_merged_local(conn: Connection, p: Principal, rec_id, settings: Settings
     return {"status": sm.MERGED}
 
 
-def mark_deployed(conn: Connection, p: Principal, rec_id, *, reference: str | None) -> dict[str, Any]:
+def mark_deployed(conn: Connection, p: Principal, rec_id, *, reference: str | None, deployed_on: date | None = None) -> dict[str, Any]:
+    """MERGED → DEPLOYED. `deployed_on` (opcional) es el día real del despliegue; por defecto, hoy. Fija el fin de la ventana previa."""
     rec = _lock(conn, rec_id)
+    today = date.today()
+    if deployed_on is not None:
+        if deployed_on > today:
+            raise WorkflowError(422, "La fecha de despliegue no puede ser futura", "invalid_date")
+        if rec["approved_at"] is not None and deployed_on < rec["approved_at"].date():
+            raise WorkflowError(422, "La fecha de despliegue no puede ser anterior a la aprobación", "invalid_date")
+    day = deployed_on or today
+    when = datetime.combine(day, time(), tzinfo=timezone.utc) if deployed_on else datetime.now(timezone.utc)
     actor = audit.user_actor(p)
-    transition(conn, p.org_id, rec_id, rec["status"], sm.DEPLOYED, actor, reference, set_sql="deployed_at = now()")
+    transition(conn, p.org_id, rec_id, rec["status"], sm.DEPLOYED, actor, reference, set_sql="deployed_at = %s", set_params=(when,))
+    res_row = conn.execute("select * from resources where id = %s", (str(rec["resource_pk"]),)).fetchone()
+    baseline = savings_measurement.capture_baseline(conn, p.org_id, rec, res_row, phase="deployment", as_of=day, created_by=p.user_id, actor=actor)
     audit.record(conn, p.org_id, audit.DEPLOYMENT, actor=actor, entity_type="recommendation", entity_id=rec_id,
-                 payload={"reference": reference})
-    return {"status": sm.DEPLOYED}
+                 payload={"reference": reference, "deployed_on": day.isoformat(), "baseline_monthly_cost": float(baseline["monthly_cost"])})
+    return {"status": sm.DEPLOYED, "deployed_on": day.isoformat(), "baseline_monthly_cost": float(baseline["monthly_cost"]),
+            "baseline_data_grade": baseline["data_grade"]}
 
 
 # ---------------------------------------------------------------------------- ahorro real
 def verify_savings(conn: Connection, p: Principal, rec_id, *, observed_monthly_cost: float | None) -> dict[str, Any]:
+    """DEPLOYED → VERIFIED. Sin `observed_monthly_cost` se MIDE con los costes facturados (ventanas alineadas y controles de uso);
+    con él, el ahorro queda como DECLARADO (no medido) y así se informa. Ver domain/measurement.py y docs/savings-methodology.md."""
     rec = _lock(conn, rec_id)
     if rec["status"] != sm.DEPLOYED:
         raise WorkflowError(409, f"Solo se verifica el ahorro tras el despliegue (estado actual: {rec['status']})", "invalid_state")
-    baseline = float(rec["current_monthly_cost"])
-    window_start = window_end = None
+    res = conn.execute("select * from resources where id = %s", (str(rec["resource_pk"]),)).fetchone()
+    approved = float(rec["approved_monthly_savings"] if rec["approved_monthly_savings"] is not None else rec["estimated_monthly_savings"])
+    estimated = float(rec["estimated_monthly_savings"])
+    window_start = window_end = base_start = base_end = baseline_id = None
+    confounders: list[dict] = []
+    controls: dict[str, Any] = {}
+    limitations: list[str] = []
     if observed_monthly_cost is None:
-        window_start = rec["deployed_at"].date() + timedelta(days=1)
-        window_end = date.today()
-        days = (window_end - window_start).days
-        if days < MIN_VERIFICATION_DAYS:
-            raise WorkflowError(422, f"Se necesitan al menos {MIN_VERIFICATION_DAYS} días de costos posteriores al despliegue (hay {max(days, 0)})",
-                                "insufficient_data")
-        has_data = conn.execute("select 1 from cost_records where cloud_account_id = %s and usage_date >= %s limit 1",
-                                (str(rec["cloud_account_id"]), window_start)).fetchone()
-        if not has_data:
-            raise WorkflowError(422, "No hay registros de costos posteriores al despliegue para esta cuenta", "insufficient_data")
-        total = conn.execute(
-            """select coalesce(sum(amount), 0) as total from cost_records
-                where resource_pk = %s and usage_date >= %s and usage_date < %s""",
-            (str(rec["resource_pk"]), window_start, window_end)).fetchone()["total"]
-        observed = monthly_from_window(float(total), days)
-        method = "cost_records"
+        deployed_on = rec["deployed_at"].date()
+        try:
+            m, windows, stored = savings_measurement.measure_recommendation(conn, rec, res, deployed_on=deployed_on, today=date.today())
+        except InsufficientData as exc:
+            raise WorkflowError(422, str(exc), "insufficient_data") from exc
+        window_start, window_end = windows.post_start, windows.post_end
+        base_start, base_end = windows.pre_start, windows.pre_end
+        baseline_id = stored["id"] if stored else None
+        baseline, observed, observed_savings = m.baseline_monthly_cost, m.observed_monthly_cost_adjusted, m.adjusted_savings
+        pct, attribution, grade, data_grade = m.realization_pct, m.attribution, m.confidence_grade, m.data_grade
+        confounders, controls, limitations = [c.to_dict() for c in m.confounders], m.controls, m.limitations
+        raw_savings = m.raw_savings
+        method = "cost_records_controlled"
     else:
-        observed, method = round(float(observed_monthly_cost), 2), "manual"
-    real = compute_realization(float(rec["estimated_monthly_savings"]), baseline, observed)
+        stored = savings_measurement.latest_baseline(conn, rec_id)
+        baseline = float(stored["monthly_cost"]) if stored and stored["data_grade"] == "billing" else \
+            float(rec["approved_baseline_cost"] if rec["approved_baseline_cost"] is not None else rec["current_monthly_cost"])
+        baseline_id = stored["id"] if stored else None
+        observed = round(float(observed_monthly_cost), 2)
+        real0 = compute_realization(approved, baseline, observed)
+        observed_savings, raw_savings, pct = real0.observed_monthly_savings, real0.observed_monthly_savings, real0.realization_pct
+        attribution, grade, data_grade, method = "unverified", "low", "declared", "manual"
+        limitations = ["Coste posterior DECLARADO por una persona: la plataforma no lo midió ni lo contrastó con la facturación."]
     conn.execute(
-        """insert into savings_verifications (organization_id, recommendation_id, expected_monthly_savings,
-               baseline_monthly_cost, observed_monthly_cost, observed_monthly_savings, realization_pct, window_start,
-               window_end, method, created_by) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
-        (str(p.org_id), str(rec_id), real.expected_monthly_savings, real.baseline_monthly_cost, real.observed_monthly_cost,
-         real.observed_monthly_savings, real.realization_pct, window_start, window_end, method, p.user_id))
+        """insert into savings_verifications (organization_id, recommendation_id, expected_monthly_savings, baseline_monthly_cost,
+               observed_monthly_cost, observed_monthly_savings, realization_pct, window_start, window_end, method, created_by,
+               estimated_monthly_savings, approved_monthly_savings, raw_observed_monthly_savings, baseline_id, baseline_window_start,
+               baseline_window_end, data_grade, attribution, confidence_grade, confounders, controls, limitations)
+           values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (str(p.org_id), str(rec_id), round(approved, 2), round(baseline, 2), round(observed, 2), round(observed_savings, 2), pct,
+         window_start, window_end, method, p.user_id, round(estimated, 2), round(approved, 2), round(raw_savings, 2),
+         str(baseline_id) if baseline_id else None, base_start, base_end, data_grade, attribution, grade,
+         Jsonb(confounders), Jsonb(controls), Jsonb(limitations)))
     actor = audit.user_actor(p)
-    transition(conn, p.org_id, rec_id, sm.DEPLOYED, sm.VERIFIED, actor, f"Realización {real.realization_pct}%",
-               set_sql="verified_at = now()")
-    audit.record(conn, p.org_id, audit.SAVINGS_VERIFIED, actor=actor, entity_type="recommendation", entity_id=rec_id,
-                 payload={"method": method, **real.__dict__})
-    if real.observed_monthly_savings > 0:
-        metrics.REALIZED_SAVINGS_USD.inc(real.observed_monthly_savings)
-    return {"status": sm.VERIFIED, **real.__dict__, "method": method}
+    transition(conn, p.org_id, rec_id, sm.DEPLOYED, sm.VERIFIED, actor, f"Realización {pct}% ({attribution})", set_sql="verified_at = now()")
+    summary = {"method": method, "expected_monthly_savings": round(approved, 2), "baseline_monthly_cost": round(baseline, 2),
+               "observed_monthly_cost": round(observed, 2), "observed_monthly_savings": round(observed_savings, 2),
+               "raw_observed_monthly_savings": round(raw_savings, 2), "realization_pct": pct, "attribution": attribution,
+               "confidence_grade": grade, "data_grade": data_grade, "confounders": [c["code"] for c in confounders]}
+    audit.record(conn, p.org_id, audit.SAVINGS_VERIFIED, actor=actor, entity_type="recommendation", entity_id=rec_id, payload=summary)
+    if observed_savings > 0 and data_grade == "billing":
+        metrics.REALIZED_SAVINGS_USD.inc(observed_savings)
+    return {"status": sm.VERIFIED, **summary, "estimated_monthly_savings": round(estimated, 2), "confounder_details": confounders,
+            "limitations": limitations}
 
 
 def recommendation_detail(conn: Connection, rec_id) -> dict[str, Any]:

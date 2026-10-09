@@ -18,8 +18,10 @@ aprobado → parche IaC → plan sintético + contexto → opa eval → ¿deny? 
 ## Reglas incluidas (`packages/policies/guardrail.rego`)
 | Regla | Se permite si… |
 |---|---|
-| Eliminar un recurso de **producción o de entorno desconocido** | el recurso tiene la etiqueta `finops:reinforced-approval` (texto no vacío) **o** la plataforma registró la aprobación reforzada |
-| **Redimensionar** una instancia de producción | tiene `finops:change-ticket` **o** se citó un ticket en la aprobación |
+| Eliminar un recurso de **producción o de entorno desconocido** (AWS: instancia, volumen, snapshot, **base de datos RDS**; Azure: VM, disco, snapshot; GCP: instancia, disco, snapshot) | el recurso tiene la etiqueta `finops:reinforced-approval` (texto no vacío) **o** la plataforma registró la aprobación reforzada |
+| **Redimensionar** una instancia de producción (AWS, Azure o GCP) | tiene `finops:change-ticket` **o** se citó un ticket en la aprobación |
+
+**Cobertura:** un tipo de recurso que no esté en `destructive_types` no queda protegido. Hasta esta revisión el guardrail solo cubría tres tipos de AWS (la eliminación de RDS de producción y todo lo de Azure/GCP pasaba sin violación); `tests/unit/test_guardrail_matrix.py` falla si se añade un tipo a `TF_TYPES` sin añadirlo a la política y prueba casos permitidos y denegados con el binario `opa` real.
 
 Un entorno ausente o no reconocido (`Prod-EU`) cuenta como producción: es la opción prudente. `null` y `""` nunca cuentan como etiqueta o ticket.
 

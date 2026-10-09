@@ -23,13 +23,14 @@ from typing import Any
 
 from . import metrics
 from .config import Settings
-from .domain.rules import ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE
+from .domain.models import RESIZE_ATTR
+from .domain.rules import ACTION_DELETE_DB, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE
 
 QUERY = "data.cloudcost.guardrail.deny"
 MAX_PLAN_BYTES = 2_000_000
 _TICKET_RE = re.compile(r"\b[A-Z][A-Z0-9]{1,9}-\d{1,8}\b")          # CHG-1234, INC-77, JIRA-9
 _REINFORCING_ROLES = {"ADMIN", "SRE"}
-_DELETE_ACTIONS = {ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT}
+_DELETE_ACTIONS = {ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_DB}
 
 
 class PolicyEngineError(Exception):
@@ -160,14 +161,15 @@ def plan_from_change(*, tf_type: str, address: str, action: str, params: dict[st
     """Plan equivalente a `terraform show -json` para UN cambio (el parche IaC aprobado) más el contexto de la plataforma."""
     tags = dict(resource.get("tags") or {})
     before: dict[str, Any] = {"id": resource.get("resource_id"), "tags": tags}
-    if tf_type == "aws_instance":
-        before["instance_type"] = params.get("current_instance_type") or resource.get("instance_type")
+    size_attr = RESIZE_ATTR.get(tf_type)                         # atributo que fija el tamaño en este tipo (instance_type, size, machine_type)
+    if size_attr:
+        before[size_attr] = params.get("current_instance_type") or resource.get("instance_type")
     elif tf_type == "aws_ebs_volume":
         before.update(type=resource.get("volume_type"), size=resource.get("size_gb"))
     else:
         before["volume_size"] = resource.get("size_gb")
     if action == ACTION_RESIZE:
-        actions, after = ["update"], {**before, "instance_type": params.get("target_instance_type")}
+        actions, after = ["update"], {**before, size_attr or "instance_type": params.get("target_instance_type")}
     elif action in _DELETE_ACTIONS:
         actions, after = ["delete"], None
     else:
