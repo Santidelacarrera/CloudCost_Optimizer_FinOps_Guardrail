@@ -11,6 +11,7 @@ import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import psycopg
@@ -352,7 +353,9 @@ def test_upgrade_keeps_old_events_verifiable_and_new_ones_are_v2():
         for f in sorted((ROOT / "migrations").glob("*.sql")):
             if f.name < "011":
                 (old / f.name).write_text(f.read_text())
-        env = {**os.environ, "DATABASE_ADMIN_URL": url, "APP_DB_PASSWORD": "pw2", "MIGRATIONS_DIR": str(old)}
+        # migrate.sh fija la contraseña del rol cloudcost_app, que es COMPARTIDO por todo el clúster: debe conservar la que ya usa el resto de pruebas.
+        app_pw = urlparse(os.environ["DATABASE_URL"]).password
+        env = {**os.environ, "DATABASE_ADMIN_URL": url, "APP_DB_PASSWORD": app_pw, "MIGRATIONS_DIR": str(old)}
         subprocess.run(["sh", str(ROOT / "scripts" / "migrate.sh")], env=env, check=True, capture_output=True)
         org = str(uuid4())
         with psycopg.connect(url, autocommit=True) as c:
