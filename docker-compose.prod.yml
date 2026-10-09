@@ -12,7 +12,7 @@ x-api-env: &api-env
   DATABASE_URL: postgresql://cloudcost_app:${APP_DB_PASSWORD:?define APP_DB_PASSWORD}@postgres:5432/cloudcost
   REDIS_URL: redis://redis:6379/0
   AUTH_MODE: local
-  AUTH_LOCAL_ENABLED: "true"
+  AUTH_LOCAL_ENABLED: ${AUTH_LOCAL_ENABLED:-true}   # false: solo SSO (docs/sso.md)
   AUTH_SIGNUP_OPEN: ${AUTH_SIGNUP_OPEN:-true}   # false: solo con invitación (ciérralo cuando ya existan las cuentas fundadoras)
   DEMO_ENABLED: "false"
   PUBLIC_WEB_URL: ${PUBLIC_WEB_URL:?define PUBLIC_WEB_URL (https://...)}
@@ -25,6 +25,21 @@ x-api-env: &api-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM: ${SMTP_FROM:?define SMTP_FROM}
+  SSO_ENABLED: ${SSO_ENABLED:-false}                  # OIDC con Entra ID / Okta; ver docs/sso.md
+  SSO_PROVIDER: ${SSO_PROVIDER:-entra}
+  SSO_LABEL: ${SSO_LABEL:-}
+  SSO_ISSUER: ${SSO_ISSUER:-}
+  SSO_TENANT_ID: ${SSO_TENANT_ID:-}
+  SSO_CLIENT_ID: ${SSO_CLIENT_ID:-}
+  SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+  SSO_ORG_ID: ${SSO_ORG_ID:-}
+  SSO_ALLOWED_DOMAINS: ${SSO_ALLOWED_DOMAINS:-}
+  SSO_ROLE_CLAIM: ${SSO_ROLE_CLAIM:-}
+  SSO_ROLE_MAP: ${SSO_ROLE_MAP:-}
+  SSO_DEFAULT_ROLE: ${SSO_DEFAULT_ROLE:-VIEWER}
+  SSO_JIT: ${SSO_JIT:-true}
+  SSO_LINK_EXISTING: ${SSO_LINK_EXISTING:-false}
+  SSO_REQUIRED_AMR: ${SSO_REQUIRED_AMR:-}
   GITHUB_TOKEN: ${GITHUB_TOKEN:-}
   GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
   LLM_ENABLED: ${LLM_ENABLED:-false}

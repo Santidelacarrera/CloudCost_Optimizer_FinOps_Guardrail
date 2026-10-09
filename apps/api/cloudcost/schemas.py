@@ -132,6 +132,12 @@ class TokenIn(BaseModel):
     token: str = Field(min_length=10, max_length=200)
 
 
+class SsoCallbackIn(BaseModel):
+    code: str = Field(min_length=1, max_length=4096)
+    state: str = Field(min_length=1, max_length=512)
+    flow_token: str = Field(min_length=10, max_length=2048)
+
+
 class EmailIn(_EmailModel):
     pass
 

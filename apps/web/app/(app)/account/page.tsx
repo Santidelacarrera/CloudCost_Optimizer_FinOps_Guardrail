@@ -45,8 +45,19 @@ export default function Account() {
           {me.password_changed_at && <><dt>Contraseña cambiada</dt><dd>{fmtDate(me.password_changed_at)}</dd></>}
         </dl>
       </section>
-      <PasswordSection email={me.email} name={me.full_name} onDone={changed} />
-      <MfaSection me={me} onChanged={changed} />
+      {me.sso ? (
+        <section className="section">
+          <header><h2>Inicio de sesión único</h2><p>Tu acceso lo gestiona el proveedor de identidad de tu organización.</p></header>
+          <p className="note info" style={{ maxWidth: 560 }}>
+            La contraseña y la verificación en dos pasos se administran allí. Tu rol en CloudCost se actualiza en cada inicio de sesión según tus grupos.
+          </p>
+        </section>
+      ) : (
+        <>
+          <PasswordSection email={me.email} name={me.full_name} onDone={changed} />
+          <MfaSection me={me} onChanged={changed} />
+        </>
+      )}
       <SessionsSection />
     </>
   );

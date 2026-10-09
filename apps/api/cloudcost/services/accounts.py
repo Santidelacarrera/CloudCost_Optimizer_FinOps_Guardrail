@@ -424,7 +424,7 @@ def me(p) -> dict:
     with auth_tx(p.org_id) as conn:
         row = conn.execute(
             """select a.id, a.email, a.full_name, a.role, a.email_verified_at, a.mfa_enabled_at, a.password_changed_at, a.last_login_at,
-                      a.created_at, o.name as organization,
+                      a.created_at, o.name as organization, (a.sso_subject is not null) as sso,
                       (select count(*)::int from auth_recovery_codes c where c.account_id = a.id and c.used_at is null) as recovery_codes_left
                  from accounts a join organizations o on o.id = a.organization_id where a.id = %s and a.organization_id = %s""",
             (p.account_id, str(p.org_id))).fetchone()
@@ -434,7 +434,8 @@ def me(p) -> dict:
             "mfa_enabled": row["mfa_enabled_at"] is not None, "recovery_codes_left": row["recovery_codes_left"],
             "email_verified": row["email_verified_at"] is not None, "password_changed_at": row["password_changed_at"],
             "last_login_at": row["last_login_at"], "created_at": row["created_at"],
-            "mfa_recommended": row["role"] in ("ADMIN", "FINOPS", "SRE") and row["mfa_enabled_at"] is None}
+            "sso": row["sso"],
+            "mfa_recommended": row["role"] in ("ADMIN", "FINOPS", "SRE") and row["mfa_enabled_at"] is None and not row["sso"]}
 
 
 def list_sessions(p) -> list[dict]:
@@ -519,7 +520,8 @@ def forgot_password(settings: Settings, *, email: str, ip: str | None, outbox: O
                 ip and _recent(conn, "forgot", ip=ip, seconds=MAIL_WINDOW, only_failures=False) >= MAIL_IP_LIMIT):
             raise AuthError(429, "Ya enviamos varios correos. Revisa tu bandeja o inténtalo más tarde.", "rate_limited", retry_after=MAIL_WINDOW)
         _record(conn, "forgot", eh, ip, True)
-        acc = conn.execute("select id, organization_id from accounts where email = %s and disabled_at is null", (email,)).fetchone()
+        acc = conn.execute("select id, organization_id from accounts where email = %s and disabled_at is null and sso_subject is null",
+                           (email,)).fetchone()                 # las cuentas SSO no tienen contraseña local que recuperar
         if acc:
             raw = _issue_token(conn, "reset_password", 1, account_id=acc["id"], org_id=acc["organization_id"])
             mail = mailer.reset_mail(email, _web(settings, f"/reset-password?token={raw}"))

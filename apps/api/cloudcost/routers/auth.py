@@ -20,10 +20,11 @@ from ..schemas import (
     MfaVerifyIn,
     ResetPasswordIn,
     SignupIn,
+    SsoCallbackIn,
     TokenIn,
 )
 from ..security import Principal, require, require_session
-from ..services import accounts
+from ..services import accounts, sso
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -55,7 +56,21 @@ def _flush(settings: Settings, outbox: list[mailer.Mail], bg: BackgroundTasks) -
 @router.get("/config")
 def config(settings: Settings = Depends(get_settings)):
     return {"local_enabled": settings.auth_local_enabled, "signup_open": settings.auth_signup_open, "dev_login_enabled": settings.auth_mode == "dev" and settings.env != "production",
-            "password_min_length": 12, "mfa_issuer": settings.auth_mfa_issuer}
+            "password_min_length": 12, "mfa_issuer": settings.auth_mfa_issuer, **sso.public_info(settings)}
+
+
+@router.get("/sso/start")
+def sso_start(settings: Settings = Depends(get_settings)):
+    """Devuelve la URL del IdP y un token de flujo firmado que el BFF guarda en una cookie httpOnly (nunca llega al JavaScript)."""
+    return sso.start(settings)
+
+
+@router.post("/sso/callback")
+def sso_callback(body: SsoCallbackIn, request: Request, settings: Settings = Depends(get_settings)):
+    ip, ua = _client(request, settings)
+    out = sso.callback(settings, code=body.code, state=body.state, flow_token=body.flow_token, ip=ip, ua=ua)
+    metrics.AUTH_LOGINS.labels("sso_ok").inc()
+    return out
 
 
 @router.post("/signup", status_code=202)

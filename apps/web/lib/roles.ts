@@ -14,5 +14,5 @@ export const ROLES = ["ADMIN", "FINOPS", "SRE", "DEVELOPER", "AUDITOR", "VIEWER"
 export type Me = {
   mode?: "dev"; id?: string; email: string; full_name: string; role: string; organization: string; mfa_enabled: boolean;
   mfa_recommended: boolean; recovery_codes_left?: number; email_verified?: boolean; password_changed_at?: string | null;
-  last_login_at?: string | null; created_at?: string;
+  last_login_at?: string | null; created_at?: string; sso?: boolean;
 };

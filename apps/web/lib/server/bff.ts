@@ -7,6 +7,7 @@ export const API = process.env.API_URL ?? "http://localhost:8000";
 export const SECURE = process.env.NODE_ENV === "production" && process.env.INSECURE_COOKIES !== "1";
 export const SESSION_COOKIE = SECURE ? "__Host-cc_session" : "cc_session";
 export const PENDING_COOKIE = SECURE ? "__Host-cc_pending" : "cc_pending";
+export const SSO_COOKIE = SECURE ? "__Host-cc_sso" : "cc_sso";   // estado del inicio de sesión único en curso (firmado por la API, 10 min)
 
 export const cookieOpts = (maxAge: number) => ({ httpOnly: true, sameSite: "strict" as const, secure: SECURE, path: "/", maxAge });
 
@@ -15,6 +16,19 @@ export function setCookie(res: NextResponse, name: string, value: string, maxAge
 }
 export function clearCookie(res: NextResponse, name: string) {
   res.cookies.set(name, "", cookieOpts(0));
+}
+
+/** El IdP vuelve a nuestro sitio con una navegación entre sitios: esa cookie (y solo esa) debe ser Lax para llegar al callback.
+ *  La cookie de sesión sigue siendo Strict. */
+export function setFlowCookie(res: NextResponse, value: string, maxAge: number) {
+  res.cookies.set(SSO_COOKIE, value, { httpOnly: true, sameSite: "lax", secure: SECURE, path: "/", maxAge });
+}
+
+/** URL absoluta de nuestro propio sitio para redirigir (detrás de un proxy, `req.url` puede traer el host interno). */
+export function appUrl(req: NextRequest, path: string): URL {
+  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim() ?? (SECURE ? "https" : "http");
+  return new URL(path, host ? `${proto}://${host}` : req.url);
 }
 
 const NO_STORE = { "Cache-Control": "no-store" };

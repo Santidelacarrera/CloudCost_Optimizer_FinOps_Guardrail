@@ -22,6 +22,14 @@
 - **IP de cliente**: con `AUTH_TRUST_FORWARDED=true` la API toma la **última** entrada de `X-Forwarded-For`. Úsalo solo si la API únicamente es alcanzable por el BFF o un proxy propio que sobrescriba esa cabecera (en `docker-compose.yml` el puerto de la API solo se publica en 127.0.0.1).
 - **Una cuenta pertenece a una organización**; una invitación solo sirve para el correo invitado.
 
+## Inicio de sesión único (SSO, OIDC)
+Guía de configuración en [sso.md](sso.md). Código de autorización + PKCE (S256) con Entra ID u Okta.
+- **Flujo atado al navegador**: `state`, `nonce` y el verificador PKCE viajan en un token firmado (HMAC con clave derivada del pepper, 10 min) guardado en una cookie httpOnly `Lax`; sin esa cookie o con otro `state` el callback se rechaza (defensa contra *login CSRF* y reutilización de respuestas).
+- **ID token**: solo RS256/ES256 (se rechazan `none` y HS256 con la clave pública), `aud`, `iss`, `exp`, `iat`, `nonce` y `azp`; en Entra además el `tid` debe ser tu directorio (nunca `common`). JWKS con caché y relectura limitada al rotar claves. Los endpoints del IdP deben estar en el mismo host https que el emisor (*mix-up*).
+- **Identidad = (emisor, sub), no el correo** (*nOAuth*). Un correo ya existente no se reasigna: enlazar una cuenta local exige `SSO_LINK_EXISTING=true`, correo verificado por el IdP y la misma organización; la cuenta pierde su contraseña local y se cierran sus sesiones.
+- **Roles desde el IdP**: grupos o roles de aplicación mapeados con prioridad fija (ADMIN > FINOPS > SRE > DEVELOPER > AUDITOR > VIEWER), recalculados en cada acceso. Sin coincidencia: rol por defecto o rechazo. El segundo factor lo exige el IdP (`SSO_REQUIRED_AMR=mfa` lo verifica).
+- **Auditoría**: `LOGIN_SUCCEEDED` (con `sso`), `ACCOUNT_CREATED`/`ACCOUNT_LINKED`, `MEMBER_UPDATED` al cambiar el rol y `SSO_LOGIN_FAILED` con el código del fallo, sin correos ni tokens. Un callback sin flujo válido no escribe en la auditoría.
+
 ## Producción
 `ENV=production` exige `AUTH_PEPPER` propio (≥32), `SMTP_HOST` y `PUBLIC_WEB_URL` https, y se niega a arrancar con auth de desarrollo o demo activa. La web solo habilita el acceso de desarrollo con `DEV_LOGIN=dev` explícito (el compose de producción no lo define). El camino completo (TLS, copias, alertas, despliegue) está en [deployment.md](deployment.md) y la lista de comprobación en [launch-checklist.md](launch-checklist.md).
 
