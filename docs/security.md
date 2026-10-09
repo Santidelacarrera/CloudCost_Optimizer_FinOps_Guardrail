@@ -25,7 +25,7 @@
 ## Producción
 `ENV=production` exige `AUTH_PEPPER` propio (≥32), `SMTP_HOST` y `PUBLIC_WEB_URL` https, y se niega a arrancar con auth de desarrollo o demo activa. La web solo habilita el acceso de desarrollo con `DEV_LOGIN=dev` explícito (el compose de producción no lo define). El camino completo (TLS, copias, alertas, despliegue) está en [deployment.md](deployment.md) y la lista de comprobación en [launch-checklist.md](launch-checklist.md).
 
-- **Pepper**: guárdalo en un gestor de secretos **y fuera del servidor**; las copias de seguridad no lo incluyen. No se puede rotar hoy sin invalidar contraseñas y 2FA (ver la lista de lanzamiento).
+- **Pepper**: guárdalo en un gestor de secretos **y fuera del servidor**; las copias de seguridad no lo incluyen. Se puede rotar sin invalidar contraseñas ni 2FA: cada hash, secreto TOTP y código de recuperación guarda el id del pepper con el que se creó, y la API acepta varios a la vez (`AUTH_PEPPER_ID` + `AUTH_PEPPER_PREVIOUS`). Procedimiento y límites en [pepper-rotation.md](pepper-rotation.md).
 - **Registro**: `AUTH_SIGNUP_OPEN=false` limita la creación de cuentas a invitaciones.
 - **Copias**: `pg_dump` cifrado en tránsito hacia S3 (`BACKUP_S3_URI`); cada copia se restaura en una base temporal y se verifica la cadena de auditoría. El rol que copia debe saltarse RLS.
 - **Observabilidad**: métricas `http_requests_total`, `http_request_duration_seconds`, `auth_failures_total{code}` y `auth_logins_total{status}`; reglas en `infrastructure/docker/alerts.yml`. `/metrics` solo es alcanzable dentro de la red de Docker.
