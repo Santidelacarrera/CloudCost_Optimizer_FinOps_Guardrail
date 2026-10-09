@@ -4,6 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import JSONResponse
 
 from ..config import Settings, get_settings
 from ..db import tenant_tx
@@ -50,7 +51,14 @@ def reject(rec_id: UUID, body: DecisionIn, p: Principal = Depends(require(*APPRO
 def create_pr(rec_id: UUID, p: Principal = Depends(require(*CREATE_PR)), settings: Settings = Depends(get_settings)):
     """Crea el Pull Request con el parche IaC. Exige estado APPROVED; es idempotente y nunca fusiona ni despliega."""
     with tenant_tx(p.org_id) as conn:
-        return workflow.create_pull_request(conn, p, rec_id, settings=settings, secrets=SecretResolver())
+        result = workflow.create_pull_request(conn, p, rec_id, settings=settings, secrets=SecretResolver())
+    if result.get("blocked"):          # la auditoría de la evaluación ya quedó confirmada (no se lanzó excepción dentro de la transacción)
+        engine_down = result["code"] == "policy_engine_unavailable"
+        message = ("El motor de políticas no está disponible: por seguridad no se crea el PR. Reintenta o revisa OPA_BINARY."
+                   if engine_down else "Una política bloquea este Pull Request:")
+        return JSONResponse(status_code=503 if engine_down else 422, content={
+            "detail": {"message": message, "errors": result["violations"]}, "code": result["code"]})
+    return result
 
 
 @router.post("/recommendations/{rec_id}/mark-merged")

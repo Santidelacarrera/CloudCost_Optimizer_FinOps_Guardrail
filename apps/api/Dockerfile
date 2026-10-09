@@ -4,6 +4,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY apps/api/cloudcost ./cloudcost
+# Motor de políticas: binario oficial de OPA (imagen fijada por versión) + las políticas Rego de la plataforma.
+COPY --from=openpolicyagent/opa:1.9.0-static /opa /usr/local/bin/opa
+COPY packages/policies/guardrail.rego ./policies/guardrail.rego
+ENV OPA_POLICY_DIR=/app/policies
 COPY infrastructure/terraform/example-iac ./example-iac
 RUN useradd -r -u 10001 app && chown -R app /app
 USER app

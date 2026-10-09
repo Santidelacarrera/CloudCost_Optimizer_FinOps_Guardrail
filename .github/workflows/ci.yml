@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - uses: open-policy-agent/setup-opa@v2        # las pruebas de guardrail y de enforcement usan el binario real
+        with: { version: "1.9.0" }
       - run: pip install -r requirements-dev.txt
       - run: ruff check apps tests
       - run: SEED_DEV=true sh scripts/migrate.sh
@@ -161,7 +163,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: open-policy-agent/setup-opa@v2
-        with: { version: latest }
+        with: { version: "1.9.0" }
+      - run: opa check --strict packages/policies
+      - run: opa fmt --fail packages/policies
       - run: opa test packages/policies -v
       - uses: hashicorp/setup-terraform@v3
       - run: |

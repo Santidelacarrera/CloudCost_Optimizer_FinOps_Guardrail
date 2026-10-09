@@ -10,7 +10,7 @@ import psycopg.errors
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
-from .. import metrics
+from .. import guardrail, metrics
 from ..config import Settings
 from ..domain import policy as pol
 from ..domain import state_machine as sm
@@ -139,10 +139,22 @@ def create_pull_request(conn: Connection, p: Principal, rec_id, *, settings: Set
         """select a.approver_role, a.reason, a.created_at, a.user_id, u.email from approvals a join users u on u.id = a.user_id
             where a.recommendation_id = %s and a.decision = 'APPROVED' and a.recommendation_version = %s order by a.created_at""",
         (str(rec_id), rec["version"])).fetchall()
+    # Política (OPA/Rego) evaluada AQUÍ, antes de tocar el repositorio: no depende de que el CI del cliente la ejecute.
+    verdict = guardrail.evaluate_plan(settings, guardrail.plan_from_change(
+        tf_type=block.type, address=block.address, action=rec["action"], params=rec["params"], resource=res, rec=rec,
+        approvals=approvals))
+    if verdict.mode != "off":
+        audit.record(conn, p.org_id, audit.POLICY_EVALUATED, actor=audit.user_actor(p), entity_type="recommendation",
+                     entity_id=rec_id, payload=verdict.audit_payload())
+    if verdict.blocked:
+        return {"created": False, "blocked": True, "code": "policy_engine_unavailable" if verdict.error else "policy_denied",
+                "violations": verdict.violations, "error": verdict.error}
+
     draft = bool((rec["policy"] or {}).get("pr_as_draft"))
     branch = pr_body.branch_name(rec)
     body = pr_body.pr_body(rec, patch_summary=patch.summary, validations=patch.validations, approvals=approvals,
-                           dashboard_url=f"{settings.public_web_url}/recommendations/{rec['id']}")
+                           dashboard_url=f"{settings.public_web_url}/recommendations/{rec['id']}",
+                           policy_notes=_policy_notes(verdict))
     try:
         cr = provider.create_change_request(
             repo=repo["full_name"], base_branch=repo["default_branch"], branch=branch, path=patch.path,
@@ -164,6 +176,16 @@ def create_pull_request(conn: Connection, p: Principal, rec_id, *, settings: Set
                           "repository": repo["full_name"], "summary": patch.summary})
     return {"created": True, "number": cr.number, "url": cr.url, "branch": cr.branch, "draft": cr.draft, "state": "open",
             "diff": patch.diff}
+
+
+def _policy_notes(verdict: guardrail.GuardrailVerdict) -> list[str]:
+    if verdict.mode == "off":
+        return []
+    if verdict.error:
+        return [f"⚠️ No se pudo evaluar la política OPA ({verdict.error}); modo {verdict.mode}."]
+    if verdict.violations:
+        return [f"⚠️ Violaciones de política (modo {verdict.mode}, no bloquearon el PR):"] + [f"  - {v}" for v in verdict.violations]
+    return [f"✅ Política OPA evaluada sin violaciones (políticas {verdict.policy_digest})."]
 
 
 # ---------------------------------------------------------------------------- eventos externos

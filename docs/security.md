@@ -11,6 +11,9 @@
 - **Webhook**: HMAC SHA-256 con comparación en tiempo constante; `org_id` en la URL solo fija el tenant.
 - **`/metrics`**: restringe a red interna en el ingress. **Swagger** se desactiva en producción.
 
+## Políticas (OPA/Rego)
+Las políticas de guardrail se evalúan **dentro de la API, antes de crear el PR**, y en `enforce` fallan cerrado si el motor no responde. Detalle, modos y cómo desbloquear un PR denegado: [policies.md](policies.md).
+
 ## Cuentas propias (`AUTH_LOCAL_ENABLED`)
 - **Contraseñas**: scrypt (N=2^15, r=8, p=3) sobre HMAC-SHA256 con un *pepper* del servidor (`AUTH_PEPPER`, fuera de la base): un volcado de la tabla no basta para atacarlas offline. Sal propia, formato autodescriptivo y re-hash automático si suben los parámetros. Política: ≥12 caracteres, rechaza contraseñas comunes, secuencias, repeticiones y datos personales; opcional `AUTH_HIBP_ENABLED` (k-anonimato, falla abierto). Como mucho 4 scrypt simultáneos para que un ataque de volumen no agote la memoria.
 - **Sin enumeración de cuentas**: el registro, el login y la recuperación responden igual exista o no el correo (hash de relleno para igualar tiempos; el correo se envía en segundo plano).

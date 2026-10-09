@@ -23,7 +23,7 @@ def commit_message(rec: dict[str, Any]) -> str:
 
 
 def pr_body(rec: dict[str, Any], *, patch_summary: str, validations: list[dict[str, Any]],
-            approvals: list[dict[str, Any]], dashboard_url: str | None = None) -> str:
+            approvals: list[dict[str, Any]], dashboard_url: str | None = None, policy_notes: list[str] | None = None) -> str:
     monthly = float(rec["estimated_monthly_savings"])
     policy = rec.get("policy") or {}
     lines = [
@@ -54,6 +54,8 @@ def pr_body(rec: dict[str, Any], *, patch_summary: str, validations: list[dict[s
     lines += ["", "### Validaciones previas"]
     for v in validations:
         lines.append(f"- {'✅' if v.get('passed') else '❌'} {v.get('check')}: {v.get('detail', '')}")
+    if policy_notes:
+        lines += ["", "### Política (OPA)", *[f"- {n}" if not n.startswith("  ") else n for n in policy_notes]]
     lines += ["", "### Aprobaciones"]
     for a in approvals:
         lines.append(f"- {a['approver_role']} · {a.get('email') or a['user_id']} · {a['created_at']:%Y-%m-%d %H:%M UTC} — «{a['reason']}»")

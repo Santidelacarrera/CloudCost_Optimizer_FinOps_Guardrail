@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     gitlab_token: SecretStr | None = None
     gitlab_webhook_secret: SecretStr | None = None
 
+    # --- políticas (OPA/Rego) evaluadas dentro de la API antes de crear el PR
+    opa_mode: Literal["off", "audit", "enforce", ""] | None = None   # vacío/ausente: enforce en producción, audit en desarrollo
+    opa_binary: str = "opa"
+    opa_policy_dir: str | None = None                             # por defecto /app/policies (imagen) o packages/policies
+    opa_extra_policy_dir: str | None = None                       # políticas propias del cliente (package cloudcost.guardrail)
+    opa_timeout_seconds: float = 5.0
+
     # --- demo
     demo_enabled: bool = True
     demo_iac_dir: str = "/app/example-iac"
@@ -84,6 +91,10 @@ class Settings(BaseSettings):
     # --- observabilidad
     otel_exporter_otlp_endpoint: str | None = None
     worker_metrics_port: int = 9100
+
+    @property
+    def effective_opa_mode(self) -> str:
+        return self.opa_mode or ("enforce" if self.env == "production" else "audit")
 
     @property
     def cors_origin_list(self) -> list[str]:

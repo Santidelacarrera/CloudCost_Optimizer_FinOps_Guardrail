@@ -11,6 +11,10 @@ LLM_LATENCY = Histogram("llm_latency_seconds", "Latencia de llamadas al asesor L
 CLOUD_API_ERRORS = Counter("cloud_api_errors_total", "Errores al invocar APIs de proveedores cloud", ["provider", "api"])
 SCANS_TOTAL = Counter("scans_total", "Escaneos finalizados", ["status"])
 
+POLICY_EVALUATIONS = Counter("policy_evaluations_total", "Evaluaciones de políticas OPA antes de crear un PR", ["result"])  # allowed|denied|error
+POLICY_LATENCY = Histogram("policy_evaluation_seconds", "Latencia de la evaluación de políticas OPA",
+                           buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5))
+
 # --- tráfico HTTP y autenticación (alimentan infrastructure/docker/alerts.yml)
 HTTP_REQUESTS = Counter("http_requests_total", "Peticiones HTTP atendidas por la API", ["method", "route", "status"])
 HTTP_LATENCY = Histogram("http_request_duration_seconds", "Latencia de las peticiones HTTP", ["method", "route"],
