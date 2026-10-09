@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 import requests
 
-from .base import ChangeRequest, GitProviderError
+from .base import ChangeRequest, GitProviderError, is_iac_file
 
 log = logging.getLogger(__name__)
 _RETRY_STATUS = {429, 502, 503, 504}
@@ -68,11 +68,11 @@ class GitHubProvider:
         prefixes = [p.strip("/") for p in (paths or ["."])]
         wanted = [
             e["path"] for e in tree.get("tree", [])
-            if e.get("type") == "blob" and e["path"].endswith(".tf") and (e.get("size") or 0) <= MAX_FILE_BYTES
+            if e.get("type") == "blob" and is_iac_file(e["path"]) and (e.get("size") or 0) <= MAX_FILE_BYTES
             and any(p in ("", ".") or e["path"] == p or e["path"].startswith(p + "/") for p in prefixes)
         ]
         if len(wanted) > MAX_FILES:
-            raise GitProviderError(f"Demasiados archivos .tf ({len(wanted)} > {MAX_FILES}); acota iac_paths")
+            raise GitProviderError(f"Demasiados archivos de IaC ({len(wanted)} > {MAX_FILES}); acota iac_paths")
         return {p: self.get_file(repo, p, ref) for p in wanted}
 
     # ------------------------------------------------------------------ escritura

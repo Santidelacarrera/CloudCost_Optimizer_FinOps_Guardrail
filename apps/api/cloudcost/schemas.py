@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -29,9 +29,9 @@ class VerifyIn(BaseModel):
 
 
 class CloudAccountIn(BaseModel):
-    provider: Literal["aws", "azure", "gcp", "demo"]
+    provider: Literal["aws", "azure", "gcp", "kubernetes", "demo"]
     account_ref: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$",
-                             description="AWS: id de cuenta · Azure: id de suscripción · GCP: id de proyecto")
+                             description="AWS: id de cuenta · Azure: id de suscripción · GCP: id de proyecto · Kubernetes: nombre del clúster")
     display_name: str = Field(min_length=1, max_length=120)
     role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/[\w+=,.@/-]{1,200}$")
     external_id_ref: str | None = None
@@ -40,6 +40,13 @@ class CloudAccountIn(BaseModel):
     tenant_id: str | None = Field(default=None, max_length=253)
     client_id: str | None = Field(default=None, max_length=36)
     credentials_ref: str | None = None
+    # Kubernetes: se lee de un Prometheus con kube-state-metrics; credentials_ref es un token Bearer opcional.
+    prometheus_url: str | None = Field(default=None, max_length=300)
+    namespaces: list[str] | None = Field(default=None, max_length=50)
+    exclude_namespaces: list[str] | None = Field(default=None, max_length=50)
+    cpu_hour_usd: float | None = Field(default=None, gt=0, lt=10)
+    mem_gib_hour_usd: float | None = Field(default=None, gt=0, lt=10)
+    environment: Literal["production", "staging", "development", "test", "unknown"] | None = None
 
     @field_validator("external_id_ref", "credentials_ref")
     @classmethod
@@ -55,6 +62,18 @@ class CloudAccountIn(BaseModel):
                 raise ValueError("Región inválida")
             return self
         if self.provider == "demo":
+            return self
+        if self.provider == "kubernetes":
+            from .collectors.kubernetes import PrometheusUrlError, validate_prometheus_url
+
+            try:
+                self.prometheus_url = validate_prometheus_url(self.prometheus_url or "")
+            except PrometheusUrlError as exc:
+                raise ValueError(str(exc)) from exc
+            for name in (*(self.namespaces or []), *(self.exclude_namespaces or [])):
+                if not re.fullmatch(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?", name):
+                    raise ValueError(f"namespace inválido: {name!r}")
+            self.regions = ["all"]
             return self
         if self.provider == "azure":
             from .collectors.cloudhttp import is_guid, is_tenant
@@ -76,8 +95,13 @@ class CloudAccountIn(BaseModel):
         return self
 
     @property
-    def provider_config(self) -> dict[str, str]:
+    def provider_config(self) -> dict[str, Any]:
         """Datos no secretos que el conector necesita; el secreto va siempre por referencia."""
+        if self.provider == "kubernetes":
+            cfg = {"prometheus_url": self.prometheus_url, "credentials_ref": self.credentials_ref, "namespaces": self.namespaces,
+                   "exclude_namespaces": self.exclude_namespaces, "cpu_hour_usd": self.cpu_hour_usd,
+                   "mem_gib_hour_usd": self.mem_gib_hour_usd, "environment": self.environment}
+            return {k: v for k, v in cfg.items() if v}
         cfg = {"tenant_id": self.tenant_id, "client_id": self.client_id, "credentials_ref": self.credentials_ref}
         return {k: v for k, v in cfg.items() if v and self.provider in ("azure", "gcp")}
 

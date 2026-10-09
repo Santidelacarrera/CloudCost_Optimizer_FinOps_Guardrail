@@ -6,7 +6,15 @@ import re
 from dataclasses import dataclass, field
 
 from ..domain.models import RESIZE_ATTR
-from ..domain.rules import ACTION_DELETE_DB, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_VOLUME, ACTION_REMOVE, ACTION_RESIZE
+from ..domain.rules import (
+    ACTION_DELETE_DB,
+    ACTION_DELETE_SNAPSHOT,
+    ACTION_DELETE_VOLUME,
+    ACTION_REMOVE,
+    ACTION_RESIZE,
+    ACTION_RIGHTSIZE_WORKLOAD,
+)
+from .helm import HelmError, HelmTarget, build_values_patch
 from .terraform import HclSyntaxError, IacIndex, TfBlock, parse_resources
 
 
@@ -93,8 +101,20 @@ def _remove(text: str, block: TfBlock, index: IacIndex) -> tuple[str, str]:
     return text[:start] + text[end:], f"{block.address}: bloque eliminado"
 
 
-def build_patch(*, action: str, params: dict, block: TfBlock, index: IacIndex) -> PatchResult:
+def build_patch(*, action: str, params: dict, block: "TfBlock | HelmTarget", index: IacIndex) -> PatchResult:
     text = index.files[block.path]
+    if action == ACTION_RIGHTSIZE_WORKLOAD:
+        if not isinstance(block, HelmTarget):
+            raise PatchError("unsupported_action", "Los workloads de Kubernetes solo se parchean en values.yaml de Helm.")
+        try:
+            new_text, summary, validations = build_values_patch(text, block, params)
+        except HelmError as exc:
+            raise PatchError(exc.code, exc.message) from exc
+        if new_text == text:
+            raise PatchError("no_change", "El parche no produce cambios.")
+        return PatchResult(block.path, new_text, unified_diff(block.path, text, new_text), summary, validations)
+    if isinstance(block, HelmTarget):
+        raise PatchError("unsupported_action", f"Acción '{action}' no aplica a un values.yaml.")
     if action == ACTION_RESIZE:
         new_text, summary = _resize(text, block, params)
     elif action in (ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_DB):

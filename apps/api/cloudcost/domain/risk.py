@@ -1,7 +1,7 @@
 """Clasificación de riesgo, impacto y prioridad de una recomendación."""
 from __future__ import annotations
 
-from .rules import ACTION_DELETE_SNAPSHOT, ACTION_RESIZE, Finding
+from .rules import ACTION_DELETE_SNAPSHOT, ACTION_RESIZE, ACTION_RIGHTSIZE_WORKLOAD, Finding
 
 LOW, MEDIUM, HIGH = "LOW", "MEDIUM", "HIGH"
 PROTECTED_ENVIRONMENTS = ("production", "unknown")     # lo desconocido se trata como producción (defensivo)
@@ -14,6 +14,10 @@ def is_production_like(environment: str | None) -> bool:
 def classify_risk(finding: Finding) -> str:
     res = finding.resource
     prod = is_production_like(res.environment)
+
+    if finding.action == ACTION_RIGHTSIZE_WORKLOAD:
+        # Bajar requests reinicia pods (rolling update) pero no borra nada: como un resize. Sin HPA ni OOM la regla ya lo descartó.
+        return LOW if (not prod and finding.confidence >= 0.85) else MEDIUM
 
     # HIGH: bases de datos, redes, clusters críticos y cambios arquitectónicos
     if res.resource_type in ("database", "kubernetes") or res.service in ("rds", "vpc", "eks"):

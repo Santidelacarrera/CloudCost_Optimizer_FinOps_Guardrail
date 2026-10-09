@@ -10,6 +10,16 @@ import json
 from dataclasses import dataclass, field, fields
 from typing import Any, Callable
 
+from .k8s import (
+    DEFAULT_CPU_CORE_HOUR,
+    DEFAULT_MEM_GIB_HOUR,
+    MIB,
+    format_cpu,
+    format_memory,
+    reserved_monthly_cost,
+    round_up_cpu,
+    round_up_memory,
+)
 from .models import COMPUTE_SERVICES, SNAPSHOT_SERVICES, VOLUME_SERVICES, NormalizedResource, is_protected, tf_type_for
 from .pricing import (
     InstanceSpec,
@@ -26,6 +36,7 @@ ACTION_REMOVE = "REMOVE_RESOURCE"
 ACTION_DELETE_VOLUME = "DELETE_VOLUME"
 ACTION_DELETE_SNAPSHOT = "DELETE_SNAPSHOT"
 ACTION_DELETE_DB = "DELETE_DB_INSTANCE"
+ACTION_RIGHTSIZE_WORKLOAD = "RIGHTSIZE_WORKLOAD"
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,13 @@ class RuleConfig:
     rds_idle_connections: float = 0.5      # conexiones medias (por debajo = nadie se conecta)
     rds_idle_cpu: float = 5.0
     rds_min_observation_days: int = 14
+    # Kubernetes: requests de un contenedor frente a su uso real
+    k8s_min_observation_days: int = 7
+    k8s_cpu_headroom: float = 1.30         # CPU recomendada = p95 de uso × holgura
+    k8s_mem_headroom: float = 1.25         # memoria recomendada = máximo observado × holgura (la memoria no se comprime)
+    k8s_min_reduction: float = 0.30        # solo se propone si el recorte es de al menos este % de lo pedido
+    k8s_min_cpu_cores: float = 0.05
+    k8s_min_memory_mib: int = 64
     min_monthly_savings: float = 5.0
 
     @classmethod
@@ -85,10 +103,12 @@ class Finding:
     params: dict[str, Any] = field(default_factory=dict)
     evidence: dict[str, Any] = field(default_factory=dict)
     alternatives: list[dict[str, Any]] = field(default_factory=list)
+    stable_key: dict[str, Any] | None = None     # identidad estable si `params` cambia con cada escaneo (p. ej. valores recomendados)
 
     def dedupe_key(self, cloud_account_id: str) -> str:
         raw = json.dumps(
-            [self.rule_id, cloud_account_id, self.resource.resource_id, self.action, self.params],
+            [self.rule_id, cloud_account_id, self.resource.resource_id, self.action,
+             self.params if self.stable_key is None else self.stable_key],
             sort_keys=True, default=str,
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
@@ -104,6 +124,10 @@ def _current_cost(res: NormalizedResource) -> float:
         return volume_monthly_cost(res.volume_type, res.size_gb)
     if res.service in SNAPSHOT_SERVICES:
         return snapshot_monthly_cost(res.size_gb, res.provider)
+    if res.service == "k8s_workload":
+        a = res.attributes
+        return reserved_monthly_cost(a.get("cpu_request") or 0.0, a.get("mem_request") or 0, int(a.get("replicas") or 1),
+                                     a.get("cpu_hour_usd") or DEFAULT_CPU_CORE_HOUR, a.get("mem_gib_hour_usd") or DEFAULT_MEM_GIB_HOUR)
     if res.service == "rds":
         return rds_monthly_cost(res.instance_type, res.size_gb, bool(res.attributes.get("multi_az")))
     return 0.0
@@ -320,8 +344,100 @@ def rule_rds_idle(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
     )
 
 
+def _same(a: float | None, b: float | None) -> bool:
+    return a is not None and b is not None and abs(a - b) <= max(1e-9, 1e-6 * abs(b))
+
+
+def rule_k8s_overprovisioned(res: NormalizedResource, cfg: RuleConfig) -> Finding | None:
+    """Contenedor que reserva (requests) mucho más de lo que usa. No elimina nada: baja requests (y límites iguales a ellos)."""
+    if res.service != "k8s_workload" or res.state != "running" or is_protected(res.tags):
+        return None
+    a = res.attributes
+    if res.observation_days < cfg.k8s_min_observation_days:
+        return None
+    cpu_req, mem_req = a.get("cpu_request"), a.get("mem_request")
+    cpu_p95, cpu_max, mem_max = a.get("cpu_p95_cores"), a.get("cpu_max_cores"), a.get("mem_max_bytes")
+    if not cpu_req or not mem_req or cpu_p95 is None or cpu_max is None or mem_max is None:
+        return None
+    replicas = max(1, int(a.get("replicas") or 1))
+
+    new_cpu = new_mem = None
+    if not a.get("hpa"):                           # con HPA los requests fijan el % de uso que escala: cambiarlos cambia las réplicas
+        want = round_up_cpu(max(cpu_p95 * cfg.k8s_cpu_headroom, cpu_max * 0.8, cfg.k8s_min_cpu_cores))
+        if want <= cpu_req * (1 - cfg.k8s_min_reduction):
+            new_cpu = want
+    if not a.get("oom_killed"):                    # un contenedor que ya murió por falta de memoria no se recorta
+        want_mem = round_up_memory(max(mem_max * cfg.k8s_mem_headroom, cfg.k8s_min_memory_mib * MIB))
+        if want_mem <= mem_req * (1 - cfg.k8s_min_reduction):
+            new_mem = want_mem
+    if new_cpu is None and new_mem is None:
+        return None
+
+    cpu_hour = a.get("cpu_hour_usd") or DEFAULT_CPU_CORE_HOUR
+    mem_hour = a.get("mem_gib_hour_usd") or DEFAULT_MEM_GIB_HOUR
+    cost = _current_cost(res)
+    savings = reserved_monthly_cost(cpu_req - new_cpu if new_cpu is not None else 0.0,
+                                    mem_req - new_mem if new_mem is not None else 0, replicas, cpu_hour, mem_hour)
+    if savings < cfg.min_monthly_savings:
+        return None
+
+    cpu_lim, mem_lim = a.get("cpu_limit"), a.get("mem_limit")
+    target: dict[str, str] = {}
+    limits: dict[str, str] = {}                     # solo cuando límite == request (QoS Guaranteed): se mantiene la igualdad
+    current = {"cpu": format_cpu(cpu_req), "memory": format_memory(mem_req)}
+    if new_cpu is not None:
+        target["cpu"] = format_cpu(new_cpu)
+        if _same(cpu_lim, cpu_req):
+            limits["cpu"] = target["cpu"]
+    if new_mem is not None:
+        target["memory"] = format_memory(new_mem)
+        if _same(mem_lim, mem_req):
+            limits["memory"] = target["memory"]
+
+    confidence = 0.70
+    confidence += 0.08 if res.observation_days >= 14 else 0.0
+    confidence += 0.05 if res.iac_address else 0.0
+    confidence += 0.04 if replicas >= 2 else -0.05
+    confidence -= 0.05 if cpu_max > (new_cpu or cpu_req) else 0.0       # el pico supera lo recomendado: posible estrangulamiento
+
+    parts = []
+    if new_cpu is not None:
+        parts.append(f"CPU: pide {current['cpu']}, usa de media {a.get('cpu_avg_cores', 0) * 1000:.0f}m (p95 {cpu_p95 * 1000:.0f}m, "
+                     f"máx {cpu_max * 1000:.0f}m) → {target['cpu']}")
+    if new_mem is not None:
+        parts.append(f"Memoria: pide {current['memory']}, máximo observado {format_memory(mem_max)} → {target['memory']}")
+    notes = []
+    if a.get("hpa") and new_cpu is None:
+        notes.append("tiene HPA: la CPU no se toca")
+    if a.get("oom_killed") and new_mem is None:
+        notes.append("hubo reinicios por OOM: la memoria no se toca")
+    ident = {"namespace": a.get("namespace"), "kind": a.get("kind"), "workload": a.get("workload"), "container": a.get("container")}
+    label = f"{a.get('namespace')}/{a.get('workload')} ({a.get('container')})"
+    return Finding(
+        rule_id="k8s_overprovisioned", action=ACTION_RIGHTSIZE_WORKLOAD, resource=res, destructive=False,
+        title=f"Ajustar requests de {label}",
+        summary=(". ".join(parts) + f". {replicas} réplica{'s' if replicas != 1 else ''}, {res.observation_days} días de datos."
+                 + (f" Nota: {'; '.join(notes)}." if notes else "")),
+        current_monthly_cost=round(cost, 2), projected_monthly_cost=round(max(0.0, cost - savings), 2),
+        estimated_monthly_savings=savings, confidence=_clamp(confidence),
+        params={**ident, "current": current, "target": target, "limits": limits,
+                "current_limits": {k: v for k, v in (("cpu", format_cpu(cpu_lim) if cpu_lim else None),
+                                                      ("memory", format_memory(mem_lim) if mem_lim else None)) if v}},
+        stable_key=ident,
+        evidence={"environment": res.environment, "replicas": replicas, "observation_days": res.observation_days,
+                  "cpu_request_cores": cpu_req, "cpu_avg_cores": a.get("cpu_avg_cores"), "cpu_p95_cores": cpu_p95, "cpu_max_cores": cpu_max,
+                  "memory_request_mib": round(mem_req / MIB, 1), "memory_avg_mib": round((a.get("mem_avg_bytes") or 0) / MIB, 1),
+                  "memory_max_mib": round(mem_max / MIB, 1), "hpa": bool(a.get("hpa")), "oom_killed": bool(a.get("oom_killed")),
+                  "cpu_limit_cores": cpu_lim, "memory_limit_mib": round(mem_lim / MIB, 1) if mem_lim else None,
+                  "headroom": {"cpu": cfg.k8s_cpu_headroom, "memory": cfg.k8s_mem_headroom},
+                  "price_basis": {"cpu_core_hour_usd": cpu_hour, "mem_gib_hour_usd": mem_hour}, "helm": a.get("helm") or None,
+                  "savings_basis": "costo de lo reservado (requests × réplicas) con precios por vCPU y GiB; no es la factura del nodo"},
+        alternatives=[{"action": "VPA_RECOMMENDATION", "description": "Dejar que un VerticalPodAutoscaler en modo «Off» calcule los requests y compararlos con esta propuesta."}],
+    )
+
+
 Rule = Callable[[NormalizedResource, RuleConfig], "Finding | None"]
-RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old, rule_rds_idle]
+RULES: list[Rule] = [rule_ec2_idle, rule_ec2_downsize, rule_ebs_orphan, rule_snapshot_old, rule_rds_idle, rule_k8s_overprovisioned]
 
 
 def evaluate_resource(res: NormalizedResource, cfg: RuleConfig) -> list[Finding]:

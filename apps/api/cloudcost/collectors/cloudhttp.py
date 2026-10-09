@@ -53,19 +53,25 @@ class BearerClient:
     """GET con token Bearer hacia un conjunto cerrado de hosts."""
 
     def __init__(self, token_provider: Callable[[], str], allowed_hosts: frozenset[str] | set[str], *,
-                 session: requests.Session | None = None, sleep: Callable[[float], None] = time.sleep):
+                 session: requests.Session | None = None, sleep: Callable[[float], None] = time.sleep,
+                 allow_http: bool = False, timeout: float = TIMEOUT):
         self._token = token_provider
         self._hosts = frozenset(allowed_hosts)
+        self._allow_http = allow_http
+        self._timeout = timeout
         self._http = session or requests.Session()
         self._sleep = sleep
 
     def get_json(self, url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         parsed = urlparse(url)
-        if parsed.scheme != "https" or parsed.hostname not in self._hosts:
+        if parsed.scheme not in (("https", "http") if self._allow_http else ("https",)) or parsed.hostname not in self._hosts:
             raise CloudApiError(0, "host_not_allowed")
         for attempt in range(MAX_RETRIES + 1):
-            resp = self._http.get(url, params=params, headers={"Authorization": f"Bearer {self._token()}",
-                                                               "Accept": "application/json"}, timeout=TIMEOUT)
+            headers = {"Accept": "application/json"}
+            token = self._token()
+            if token:                                    # Prometheus interno sin autenticación: no se envía cabecera
+                headers["Authorization"] = f"Bearer {token}"
+            resp = self._http.get(url, params=params, headers=headers, timeout=self._timeout)
             if resp.status_code in (429, 500, 502, 503, 504) and attempt < MAX_RETRIES:
                 try:
                     delay = float(resp.headers.get("Retry-After", ""))

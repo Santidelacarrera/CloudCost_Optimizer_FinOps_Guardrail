@@ -29,6 +29,10 @@ def get_collector(account: dict[str, Any], *, secrets: SecretResolver, demo_enab
         from .gcp import GcpCollector
 
         return GcpCollector(account, secrets, on_api_error=on_api_error)
+    if provider == "kubernetes":
+        from .kubernetes import KubernetesCollector
+
+        return KubernetesCollector(account, secrets, on_api_error=on_api_error)
     if provider == "import":
         from .file_import import ImportCollector
 

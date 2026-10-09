@@ -103,7 +103,7 @@ def decide(conn: Connection, p: Principal, rec_id, decision: str, reason: str, e
 def _resource_for_matching(row: dict[str, Any]) -> NormalizedResource:
     return NormalizedResource(provider=row["provider"], resource_type=row["resource_type"], service=row["service"],
                               resource_id=row["resource_id"], region=row["region"], name=row["name"],
-                              tags=row["tags"] or {}, iac_address=row["iac_address"])
+                              tags=row["tags"] or {}, iac_address=row["iac_address"], attributes=row["attributes"] or {})
 
 
 def create_pull_request(conn: Connection, p: Principal, rec_id, *, settings: Settings, secrets: SecretResolver,
@@ -129,7 +129,9 @@ def create_pull_request(conn: Connection, p: Principal, rec_id, *, settings: Set
     index = IacIndex.build(files)
     block = (index.block_by_address(res["iac_address"]) if res["iac_address"] else None) or index.match(_resource_for_matching(res))
     if block is None:
-        raise WorkflowError(422, "No se encontró el recurso en el IaC del repositorio (¿etiqueta Name o estado desactualizados?)", "iac_not_found")
+        why = index.why_no_match(_resource_for_matching(res))
+        raise WorkflowError(422, "No se encontró el recurso en el IaC del repositorio (¿etiqueta Name o estado desactualizados?)"
+                            if why["code"] == "iac_not_found" else why["message"], why["code"])
     try:
         patch = build_patch(action=rec["action"], params=rec["params"], block=block, index=index)
     except PatchError as exc:
