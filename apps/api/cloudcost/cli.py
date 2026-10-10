@@ -42,7 +42,7 @@ def aws_lab(args: argparse.Namespace) -> int:
             return 2
         cfg = lab.LabConfig(account_ref=args.account_ref, regions=[r.strip() for r in args.regions.split(",") if r.strip()], role_arn=args.role_arn,
                             external_id_env=args.external_id_env, months=args.months, ce_request_budget=args.ce_budget,
-                            use_cost_explorer=not args.no_cost_explorer, cost_tag_key=args.cost_tag_key, anonymize=args.anonymize,
+                            use_cost_explorer=not args.no_cost_explorer, include_rds=args.include_rds, cost_tag_key=args.cost_tag_key, anonymize=args.anonymize,
                             salt=args.salt, scale=args.scale)
         snap = lab.collect_snapshot(cfg)
     paths = lab.write_outputs(snap, args.out_dir)
@@ -131,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     lab_p.add_argument("--months", type=int, default=6, help="Meses de historial de coste (1-12)")
     lab_p.add_argument("--ce-budget", type=int, default=40, help="Máximo de solicitudes a Cost Explorer (cada una cuesta USD 0,01)")
     lab_p.add_argument("--no-cost-explorer", action="store_true", help="No llamar a Cost Explorer (solo inventario y métricas)")
+    lab_p.add_argument("--include-rds", action="store_true", help="Inventaría también las bases RDS (requiere rds:DescribeDBInstances en el rol)")
     lab_p.add_argument("--cost-tag-key", help="Etiqueta de asignación de costos para el historial por etiqueta")
     lab_p.add_argument("--anonymize", action="store_true", help="Seudonimiza identificadores y descarta valores de etiquetas")
     lab_p.add_argument("--salt", help="Sal de la seudonimización (por defecto, aleatoria y no se guarda)")

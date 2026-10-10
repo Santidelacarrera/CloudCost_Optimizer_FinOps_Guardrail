@@ -17,6 +17,7 @@ from aws_stub import (
     describe_instances,
     instance,
     metric_data,
+    rds_instance,
     snapshot,
     volume,
 )
@@ -137,7 +138,9 @@ def test_every_allowed_operation_is_exercised_and_nothing_else_is_called():
     from cloudcost.collectors.aws_guard import ALLOWED_OPERATIONS
 
     s = _happy()
-    _collector(s)[0].collect()
+    s.respond("rds", "DescribeDBInstances", {"DBInstances": [rds_instance()]})                       # el inventario de RDS es opt-in
+    s.respond("cloudwatch", "GetMetricData", metric_data(("r0_0", [0.5] * 336), ("r0_1", [1.0] * 336), ("r0_2", [0.0] * 336), ("r0_3", [0.0] * 336)))
+    _collector(s, include_rds=True)[0].collect()
     called = set(s.calls)
     assert called == set(ALLOWED_OPERATIONS), f"sin usar: {set(ALLOWED_OPERATIONS) - called}; fuera de la lista: {called - set(ALLOWED_OPERATIONS)}"
 

@@ -24,7 +24,7 @@ Solo Kubernetes está en L3, y de forma limitada (minikube local, cargas sintét
 | EC2: CPU (CloudWatch) y memoria (CWAgent `mem_used_percent`) | Sí | L2 | idem | Sin CWAgent no hay memoria: la regla de reducción no se propone (`require_memory_metric`) |
 | EBS: volúmenes y tiempo sin adjuntar (CloudTrail `DetachVolume`, 90 días) | Sí | L2 | idem | Máx. 50 búsquedas de CloudTrail por región y escaneo (límite de 2 solicitudes/s) |
 | EBS: snapshots propios y su relación con AMI | Sí | L2 | idem | Se excluyen los gestionados por AWS Backup/DLM (por etiqueta) y los usados por una AMI |
-| **RDS** | **No** (solo datos de demostración o CSV) | — | — | La regla `rds_idle` existe y se prueba, pero el colector real **no inventaría** RDS |
+| **RDS** | **Sí, opt-in** (`include_rds=true` en la cuenta o `--include-rds` en el laboratorio) | L2 | `test_aws_rds.py` | Bases RDS independientes `available` con CPU y conexiones (CloudWatch `AWS/RDS`, 14 días). **Aurora/clúster no se evalúan.** Exige `rds:DescribeDBInstances` en el rol (los roles anteriores no lo tienen: por eso es opcional). Coste estimado por tabla de precios; Cost Explorer por recurso no cubre RDS |
 | S3, Lambda, DynamoDB, ElastiCache, EKS/ECS, balanceadores, NAT, VPC… | **No** (inventario) | — | — | Sí aparecen en el **coste de la cuenta** por servicio (ver abajo) |
 | Cost Explorer: coste **por recurso** (EC2, EBS, snapshots), 14 días | Sí | L2 | `test_full_collection…`, `test_failure_on_a_later_page…` | Requiere activar «datos a nivel de recurso» en Cost Explorer. Si falta, se degrada a la tabla de precios y se avisa |
 | Cost Explorer: coste **de la cuenta por servicio y región**, diario (35 días) y mensual (hasta 12 meses) | Sí | L2 | `test_full_collection…` | Filtrado por `LINKED_ACCOUNT` = `account_ref`; una moneda por fila, nunca se suman monedas distintas; marca `Estimated` conservada |
@@ -44,7 +44,7 @@ Solo Kubernetes está en L3, y de forma limitada (minikube local, cargas sintét
 | `ec2_idle` | AWS EC2, Azure VM, GCP GCE | Eliminar (destructiva) | `ec2_idle.v1` |
 | `ebs_orphan` | AWS EBS, Azure Disk, GCP PD | Eliminar (destructiva) | `ebs_orphan.v1` |
 | `snapshot_old` | AWS, Azure, GCP | Eliminar (destructiva), ahorro = cota superior | `snapshot_old.v1` |
-| `rds_idle` | AWS RDS (**solo demo/CSV**) | Eliminar (destructiva) | `rds_idle.v1` |
+| `rds_idle` | AWS RDS (colector real opt-in, demo y archivo) | Eliminar (destructiva) | `rds_idle.v1` |
 | `k8s_overprovisioned` | Kubernetes vía Prometheus | Ajustar `values.yaml` de Helm | `k8s_overprovisioned.v1` |
 
 Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.md).
@@ -72,7 +72,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 ## Qué falta para subir de nivel
 
 1. **AWS L2 → L3**: ejecutar `python scripts/aws_lab.py` contra una cuenta de laboratorio y adjuntar `report.md`/`snapshot.json`.
-2. **RDS**: inventario real (`DescribeDBInstances` + `AWS/RDS` en CloudWatch). Hoy no existe.
+2. **RDS**: ejecutar `python scripts/aws_lab.py --include-rds` contra una base real (la guía de laboratorio incluye el permiso adicional).
 3. **Kubernetes**: repetir el laboratorio con ≥ 24 h de datos y, después, en un clúster real de equipo. **Azure/GCP**: cuentas de laboratorio, como en AWS.
 4. **Cuentas múltiples**: descubrimiento de cuentas vinculadas y un rol por cuenta.
 

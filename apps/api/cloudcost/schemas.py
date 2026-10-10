@@ -50,6 +50,8 @@ class CloudAccountIn(BaseModel):
     role_arn: str | None = Field(default=None, pattern=r"^arn:aws:iam::\d{12}:role/[\w+=,.@/-]{1,200}$")
     external_id_ref: str | None = None
     regions: list[str] = Field(default_factory=lambda: ["us-east-1"], min_length=1, max_length=20)
+    # AWS: inventariar también las bases RDS (exige rds:DescribeDBInstances en el rol de solo lectura; los roles anteriores no lo tienen).
+    include_rds: bool = False
     # Azure: tenant_id + client_id (+ credentials_ref = secreto del service principal). GCP: credentials_ref = JSON de la cuenta de servicio.
     tenant_id: str | None = Field(default=None, max_length=253)
     client_id: str | None = Field(default=None, max_length=36)
@@ -116,6 +118,8 @@ class CloudAccountIn(BaseModel):
                    "exclude_namespaces": self.exclude_namespaces, "cpu_hour_usd": self.cpu_hour_usd,
                    "mem_gib_hour_usd": self.mem_gib_hour_usd, "environment": self.environment}
             return {k: v for k, v in cfg.items() if v}
+        if self.provider == "aws":
+            return {"include_rds": True} if self.include_rds else {}
         cfg = {"tenant_id": self.tenant_id, "client_id": self.client_id, "credentials_ref": self.credentials_ref}
         return {k: v for k, v in cfg.items() if v and self.provider in ("azure", "gcp")}
 

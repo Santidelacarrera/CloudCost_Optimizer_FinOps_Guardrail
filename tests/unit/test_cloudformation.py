@@ -57,7 +57,7 @@ def test_solo_lectura_ninguna_accion_de_escritura_ni_comodines():
         service, verb = action.split(":")
         assert "*" not in action, action
         assert re.match(r"^(Describe|Get|List|Lookup)", verb), f"{action} no es una acción de lectura"
-        assert service in {"ec2", "cloudwatch", "cloudtrail", "ce"}
+        assert service in {"ec2", "cloudwatch", "cloudtrail", "ce", "rds"}
     assert all(st["Effect"] == "Allow" for _, st in _cfn_statements())
 
 

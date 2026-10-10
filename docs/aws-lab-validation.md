@@ -8,7 +8,7 @@ Este documento y la herramienta `aws-lab` existen para hacerlo en una tarde, con
 2. **Cost Explorer activado** (Billing → Cost Explorer) y, para el coste por recurso, «Datos a nivel de recurso» para EC2 (Billing → Cost Explorer → Settings).
 3. Opcional: CloudWatch Agent para la memoria (`mem_used_percent`).
 4. Rol de solo lectura: despliega `infrastructure/cloudformation/readonly-role.yaml` (o el módulo Terraform). Concede **exactamente** estas acciones, nada más:
-   `ec2:DescribeInstances/Volumes/Snapshots/Images`, `cloudwatch:GetMetricData/ListMetrics`, `cloudtrail:LookupEvents`, `ce:GetCostAndUsage`, `ce:GetCostAndUsageWithResources`.
+   `ec2:DescribeInstances/Volumes/Snapshots/Images`, `cloudwatch:GetMetricData/ListMetrics`, `rds:DescribeDBInstances` (solo si usas `--include-rds`), `cloudtrail:LookupEvents`, `ce:GetCostAndUsage`, `ce:GetCostAndUsageWithResources`.
    (`sts:GetCallerIdentity` no requiere permiso.) Una prueba comprueba que el rol y la lista de operaciones permitidas del código coinciden.
 
 ## 2. Ejecutar

@@ -46,7 +46,7 @@ data "aws_iam_policy_document" "read" {
   statement {
     sid = "ReadInventoryAndMetrics"
     actions = [
-      "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:DescribeImages",
+      "ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeSnapshots", "ec2:DescribeImages", "rds:DescribeDBInstances",
       "cloudwatch:GetMetricData", "cloudwatch:ListMetrics", "cloudtrail:LookupEvents",
     ]
     resources = ["*"]

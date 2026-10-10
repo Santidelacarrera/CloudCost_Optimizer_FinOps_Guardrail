@@ -48,6 +48,7 @@ class LabConfig:
     months: int = 6
     ce_request_budget: int = 40
     use_cost_explorer: bool = True
+    include_rds: bool = False                       # exige rds:DescribeDBInstances en el rol
     cost_tag_key: str | None = None
     anonymize: bool = False
     salt: str | None = None
@@ -116,7 +117,7 @@ def collect_snapshot(cfg: LabConfig, *, session=None, now: datetime | None = Non
     if session is not None:
         recorder.install(session)
     collector = AwsCollector(account, secrets, use_cost_explorer=cfg.use_cost_explorer, session=session, cost_tag_key=cfg.cost_tag_key,
-                             cost_history_months=cfg.months, ce_request_budget=cfg.ce_request_budget,
+                             cost_history_months=cfg.months, ce_request_budget=cfg.ce_request_budget, include_rds=cfg.include_rds,
                              today=(lambda: cfg.today) if cfg.today else date.today, **({"sleep": cfg.sleep} if cfg.sleep else {}))
     aborted: str | None = None
     result = CollectionResult()

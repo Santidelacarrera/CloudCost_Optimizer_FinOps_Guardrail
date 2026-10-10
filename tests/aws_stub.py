@@ -75,12 +75,9 @@ class StubbedSession:
 
 
 def _snake(op: str) -> str:
-    out = ""
-    for i, ch in enumerate(op):
-        if ch.isupper() and i:
-            out += "_"
-        out += ch.lower()
-    return out
+    from botocore import xform_name
+
+    return xform_name(op)                                                        # DescribeDBInstances -> describe_db_instances
 
 
 # --------------------------------------------------------------------------- respuestas de ejemplo (formas reales de la API)
@@ -104,6 +101,12 @@ def volume(vid="vol-0aaa", size=100, state="in-use", attached="i-0aaa", vtype="g
 def snapshot(sid="snap-0aaa", size=50, days_old=200, tags=None) -> dict:
     return {"SnapshotId": sid, "VolumeSize": size, "State": "completed", "StartTime": NOW - timedelta(days=days_old),
             "Description": "manual", "Tags": [{"Key": k, "Value": v} for k, v in (tags or {}).items()]}
+
+
+def rds_instance(ident="db-orders", klass="db.m5.large", engine="postgres", status="available", storage=200, days_old=90, tags=None, **extra) -> dict:
+    return {"DBInstanceIdentifier": ident, "DBInstanceClass": klass, "Engine": engine, "DBInstanceStatus": status, "AllocatedStorage": storage,
+            "MultiAZ": False, "DeletionProtection": False, "BackupRetentionPeriod": 7, "InstanceCreateTime": NOW - timedelta(days=days_old),
+            "TagList": [{"Key": k, "Value": v} for k, v in (tags or {"Environment": "development"}).items()], **extra}
 
 
 def metric_data(*series: tuple[str, list[float]]) -> dict:
