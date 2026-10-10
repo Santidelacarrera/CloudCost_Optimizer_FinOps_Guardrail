@@ -72,6 +72,46 @@ def k8s_lab(args: argparse.Namespace) -> int:
     return 0 if not snap["meta"]["aborted"] and not failed else 1
 
 
+def expenses(args: argparse.Namespace) -> int:
+    """Analiza archivos de gastos (CSV o Excel .xlsx; exportaciones de AWS/Azure/GCP incluidas) y escribe un informe. No usa la base de datos."""
+    import json
+    import os
+
+    from .expenses import ExpenseFormatError, analyze_documents
+    from .expenses.report import render_markdown
+    from .expenses.xlsx import xlsx_to_csv_texts
+
+    docs: list[tuple[str, str]] = []
+    try:
+        for path in args.files:
+            name = os.path.basename(path)
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            if name.lower().endswith((".xlsx", ".xlsm")) or raw.startswith(b"PK\x03\x04"):
+                docs.extend(xlsx_to_csv_texts(raw, name))
+            else:
+                try:
+                    docs.append((name, raw.decode("utf-8")))
+                except UnicodeDecodeError:
+                    docs.append((name, raw.decode("windows-1252")))             # CSV de Excel en Windows
+    except (OSError, ExpenseFormatError) as exc:
+        print(f"No se pudo leer el archivo: {exc}", file=sys.stderr)
+        return 2
+    result, err = analyze_documents(docs)
+    if err:
+        for line in err["errors"]:
+            print(line, file=sys.stderr)
+        return 1
+    os.makedirs(args.out_dir, exist_ok=True)
+    with open(os.path.join(args.out_dir, "report.md"), "w", encoding="utf-8") as fh:
+        fh.write(render_markdown(result))
+    with open(os.path.join(args.out_dir, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=1, sort_keys=True)
+    print(f"report: {os.path.join(args.out_dir, 'report.md')}")
+    print(f"hallazgos: {result['total_findings']} · nube: {len(result['cloud'])} · estados: {len(result['statements'])}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m cloudcost.cli", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -104,6 +144,10 @@ def main(argv: list[str] | None = None) -> int:
     k_p.add_argument("--out-dir", default="k8s-lab-out")
     k_p.add_argument("--from-snapshot", help="Regenera el informe a partir de una instantánea (sin acceso al clúster)")
     k_p.set_defaults(func=k8s_lab)
+    e_p = sub.add_parser("expenses", help="Analiza gastos desde CSV o Excel (.xlsx), incluidas exportaciones de facturación de AWS/Azure/GCP")
+    e_p.add_argument("files", nargs="+", help="Uno o varios archivos (varios meses se comparan entre sí)")
+    e_p.add_argument("--out-dir", default="gastos-out")
+    e_p.set_defaults(func=expenses)
     args = parser.parse_args(argv)
     return args.func(args)
 

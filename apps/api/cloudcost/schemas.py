@@ -159,13 +159,27 @@ class DevTokenIn(BaseModel):
 
 class ImportIn(BaseModel):
     filename: str = Field(min_length=1, max_length=200, pattern=r"^[^/\\\x00]+$")
-    csv_text: str = Field(min_length=10, max_length=2_500_000)
+    csv_text: str | None = Field(None, min_length=10, max_length=2_500_000)
+    xlsx_base64: str | None = Field(None, min_length=8, max_length=12_500_000)       # ≈ 9 MB de Excel (se usa la primera hoja)
     repository_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if (self.csv_text is None) == (self.xlsx_base64 is None):
+            raise ValueError("envía csv_text o xlsx_base64 (uno solo)")
+        return self
 
 
 class ExpenseFileIn(BaseModel):
     filename: str = Field(min_length=1, max_length=200, pattern=r"^[^/\\\x00]+$")
-    csv_text: str = Field(min_length=5, max_length=1_500_000)
+    csv_text: str | None = Field(None, min_length=5, max_length=1_500_000)
+    xlsx_base64: str | None = Field(None, min_length=8, max_length=12_500_000)       # ≈ 9 MB de Excel
+
+    @model_validator(mode="after")
+    def _one_source(self):
+        if (self.csv_text is None) == (self.xlsx_base64 is None):
+            raise ValueError("envía csv_text o xlsx_base64 (uno solo)")
+        return self
 
 
 class ExpenseAnalyzeIn(BaseModel):

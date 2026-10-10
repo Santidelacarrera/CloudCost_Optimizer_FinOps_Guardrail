@@ -1,6 +1,8 @@
 """Importación de archivos CSV: se valida, se guarda y se encola un escaneo con el mismo flujo de reglas/aprobación/PR."""
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +11,8 @@ from psycopg.types.json import Jsonb
 
 from ..collectors.file_import import MAX_ROWS, TEMPLATE_CSV, parse_csv
 from ..db import tenant_tx
+from ..expenses.parser import ExpenseFormatError
+from ..expenses.xlsx import xlsx_to_csv_texts
 from ..schemas import ImportIn
 from ..security import READ, SCAN, Principal, require
 from ..services import audit, scan_service
@@ -27,7 +31,14 @@ def upload(body: ImportIn, p: Principal = Depends(require(*SCAN))):
     """Valida el CSV y encola un escaneo. Si hay errores de formato no se guarda nada y se devuelven todos."""
     from ..workers.tasks import run_scan_task
 
-    parsed = parse_csv(body.csv_text)
+    text = body.csv_text
+    if body.xlsx_base64 is not None:
+        try:
+            text = xlsx_to_csv_texts(base64.b64decode(body.xlsx_base64, validate=True), body.filename)[0][1]       # primera hoja con datos
+        except (binascii.Error, ValueError) as exc:
+            msg = str(exc) if isinstance(exc, ExpenseFormatError) else "El contenido no es un Excel válido"
+            raise HTTPException(422, {"message": "El archivo tiene errores", "errors": [msg], "total_errors": 1}) from exc
+    parsed = parse_csv(text or "")
     if parsed.errors:
         raise HTTPException(422, {"message": "El archivo tiene errores", "errors": parsed.errors[:50], "total_errors": len(parsed.errors)})
     with tenant_tx(p.org_id) as conn:

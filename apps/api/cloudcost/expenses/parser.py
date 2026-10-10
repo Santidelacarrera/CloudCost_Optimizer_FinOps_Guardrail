@@ -24,6 +24,9 @@ MONTHS = {
     "enero": 1, "ene": 1, "febrero": 2, "feb": 2, "marzo": 3, "mar": 3, "abril": 4, "abr": 4, "mayo": 5, "may": 5,
     "junio": 6, "jun": 6, "julio": 7, "jul": 7, "agosto": 8, "ago": 8, "septiembre": 9, "setiembre": 9, "sept": 9,
     "sep": 9, "octubre": 10, "oct": 10, "noviembre": 11, "nov": 11, "diciembre": 12, "dic": 12,
+    # inglés (exportaciones de nube): solo los que no coinciden con el español
+    "january": 1, "jan": 1, "february": 2, "march": 3, "april": 4, "apr": 4, "june": 6, "july": 7, "august": 8, "aug": 8,
+    "september": 9, "october": 10, "november": 11, "december": 12, "dec": 12,
 }
 _MONTH_RE = re.compile(
     r"(?<![a-z])(" + "|".join(sorted(MONTHS, key=len, reverse=True)) + r")[\s._/-]*(?:de[\s._/-]*)?(\d{4}|\d{2})(?!\d)")
@@ -160,13 +163,13 @@ def _header_columns(cells: list[str]) -> dict[str, int] | None:
     return cols if "desc" in cols and "amount" in cols else None
 
 
-def read_rows(text: str) -> list[list[str]]:
+def read_rows(text: str, max_rows: int = MAX_ROWS) -> list[list[str]]:
     """Lee el CSV (separador autodetectado) como filas de celdas sin espacios sobrantes."""
     text = text.lstrip("\ufeff")
     if not text.strip():
         raise ExpenseFormatError("El archivo está vacío")
-    if text.count("\n") > MAX_ROWS + 200:
-        raise ExpenseFormatError(f"El archivo supera el máximo de {MAX_ROWS} filas")
+    if text.count("\n") > max_rows + 200:
+        raise ExpenseFormatError(f"El archivo supera el máximo de {max_rows} filas")
     try:
         return [[c.strip() for c in r] for r in csv.reader(io.StringIO(text), delimiter=_detect_delimiter(text))]
     except csv.Error as exc:

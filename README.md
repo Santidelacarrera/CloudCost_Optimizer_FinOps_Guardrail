@@ -228,6 +228,7 @@ También puedes **importar un CSV** (instancias EC2, volúmenes EBS o snapshots 
 El diseño de seguridad asume un entorno hostil y opera bajo el principio de **Fail-Closed**. Todo el sistema está diseñado para proteger la infraestructura del cliente, aislar a los tenants y prevenir la escalada de privilegios.
 
 **Aspectos destacados:**
+- **Analizar gastos desde CSV o Excel, sin conectar una cuenta**: gastos y presupuestos, estados de obra y exportaciones de facturación de AWS (CUR / Cost Explorer), Azure y GCP (gasto por servicio, región y mes, qué creció, picos diarios). Guía y límites: [docs/expenses-analysis.md](docs/expenses-analysis.md). Probado solo con archivos ficticios; es análisis de factura, no de recursos.
 - **Solo lectura hacia la nube:** Roles IAM/RBAC sin permisos de escritura, asegurados mediante `ExternalId`.
 - **Criptografía robusta:** Contraseñas en *scrypt*, protección contra ataques *Mix-up* en SSO/OIDC, y soporte nativo para **Passkeys (WebAuthn)**.
 - **Aislamiento Multi-Tenant:** Implementado mediante Row Level Security (`RLS FORCE`) en la base de datos y resolución de secretos por referencia.
