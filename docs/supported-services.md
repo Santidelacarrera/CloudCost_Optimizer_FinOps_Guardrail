@@ -55,7 +55,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 |---|---|---|---|
 | Azure | VM, discos administrados, snapshots (REST); métricas de Azure Monitor | L1 | Coste = tabla de precios (sin coste real). Sin pruebas contra una suscripción real |
 | GCP | Compute Engine, discos persistentes, snapshots; Cloud Monitoring | L1 | Coste = tabla de precios. Sin pruebas contra un proyecto real |
-| Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L3 (limitado) | No habla con la API de Kubernetes. Ejecutado contra minikube + Prometheus real el 2026-10-10 ([resultado](lab-results/k8s-minikube-2026-10-10.md)): 3 de 3 comprobaciones; solo 30 min de datos, sin facturación real. Repetir con ≥ 24 h |
+| Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L3 (limitado) | No habla con la API de Kubernetes. Ejecutado contra minikube + Prometheus real el 2026-10-10 ([resultado](lab-results/k8s-minikube-2026-10-10.md)): 3 de 3 comprobaciones con 30 min y con 16 h de datos ([16 h](lab-results/k8s-minikube-2026-10-10-16h.md)); cargas sintéticas planas, sin facturación real. Falta probar 7 días |
 | CSV importado | EC2, EBS, snapshots con uso y coste (≤ 5 000 filas / 2 MB) | L1 | Coste del archivo tratado como verificado |
 | Demostración | 21 recursos sintéticos de AWS | — | Solo con `DEMO_ENABLED=true` (prohibido en producción) |
 

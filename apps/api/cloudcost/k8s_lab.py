@@ -139,6 +139,12 @@ def _resource_dict(r: NormalizedResource) -> dict[str, Any]:
 
 
 # --------------------------------------------------------------------------- informe (determinista)
+def _age(hours: float | None) -> str:
+    if hours is None:
+        return "—"
+    return f"{hours:.0f} h" if hours < 48 else f"{hours / 24:.1f} d"
+
+
 def render_report(snap: dict[str, Any]) -> str:
     m, res, findings = snap["meta"], snap["resources"], snap["findings"]
     override = m["min_observation_days"] < m["default_min_observation_days"]
@@ -165,16 +171,16 @@ def render_report(snap: dict[str, Any]) -> str:
     a("")
     a("## 2. Inventario de workloads")
     a("")
-    a("| Workload | Réplicas | CPU pedida | CPU p95 / máx | Mem pedida | Mem máx | HPA | Días de datos | Coste reservado/mes |")
-    a("|---|---:|---:|---|---:|---:|---|---:|---:|")
+    a("| Workload | Réplicas | CPU pedida | CPU p95 / máx | Mem pedida | Mem máx | HPA | Antigüedad | Días completos de datos | Coste reservado/mes |")
+    a("|---|---:|---:|---|---:|---:|---|---:|---:|---:|")
     for r in res:
         x = r["attributes"]
         p95 = "—" if x.get("cpu_p95_cores") is None else f"{x['cpu_p95_cores'] * 1000:.0f}m / {x['cpu_max_cores'] * 1000:.0f}m"
         mem = "—" if x.get("mem_max_bytes") is None else f"{x['mem_max_bytes'] / 2**20:.0f}Mi"
         a(f"| {_md(r['name'])} | {x['replicas']} | {x['cpu_request'] * 1000:.0f}m | {p95} | {x['mem_request'] / 2**20:.0f}Mi | {mem} | "
-          f"{'sí' if x.get('hpa') else 'no'} | {r['observation_days']} | {_usd(r['monthly_cost'])} |")
+          f"{'sí' if x.get('hpa') else 'no'} | {_age(x.get('age_hours'))} | {r['observation_days']} | {_usd(r['monthly_cost'])} |")
     if not res:
-        a("| — | — | — | — | — | — | — | — | — |")
+        a("| — | — | — | — | — | — | — | — | — | — |")
     a("")
     if not res and not m["aborted"]:
         a("Prometheus no devolvió workloads con requests: comprueba que kube-state-metrics está instalado y que los namespaces son los correctos.")
@@ -222,7 +228,7 @@ def render_report(snap: dict[str, Any]) -> str:
     for line in (
         "Valida el colector contra UN clúster local (minikube) con cargas sintéticas; no demuestra que funcione igual en clústeres grandes, con muchos namespaces o con otra distribución de Prometheus.",
         "El coste es el de lo RESERVADO con precios por vCPU/GiB declarados; un clúster local no tiene factura, así que no valida la medición de ahorro contra costes reales.",
-        "Con pocas horas de datos las medias y percentiles no son representativos: solo el umbral de producción (7 días) garantiza hallazgos fiables.",
+        "Con pocas horas de datos las medias y percentiles no son representativos: solo el umbral de producción (7 días) garantiza hallazgos fiables. «Días completos de datos» trunca a días enteros (16 h cuentan como 0).",
         "El ahorro de los hallazgos es una estimación con la fórmula indicada, no un ahorro observado.",
     ):
         a(f"- {line}")
