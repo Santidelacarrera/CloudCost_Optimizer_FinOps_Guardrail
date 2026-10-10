@@ -20,6 +20,7 @@ ALLOWED_OPERATIONS: dict[tuple[str, str], str] = {
     ("ec2", "DescribeVolumes"): "ec2:DescribeVolumes",
     ("ec2", "DescribeSnapshots"): "ec2:DescribeSnapshots",
     ("ec2", "DescribeImages"): "ec2:DescribeImages",
+    ("rds", "DescribeDBInstances"): "rds:DescribeDBInstances",          # solo si la cuenta activa el inventario de RDS
     ("cloudwatch", "GetMetricData"): "cloudwatch:GetMetricData",
     ("cloudwatch", "ListMetrics"): "cloudwatch:ListMetrics",
     ("cloudtrail", "LookupEvents"): "cloudtrail:LookupEvents",

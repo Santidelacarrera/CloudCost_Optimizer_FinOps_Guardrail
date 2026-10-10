@@ -26,7 +26,7 @@ def snap():
 
 def test_snapshot_records_every_aws_operation_and_none_outside_the_read_only_list(snap):
     called = {(c["service"], c["operation"]) for c in snap["api_calls"]}
-    assert called == set(ALLOWED_OPERATIONS)
+    assert called == set(ALLOWED_OPERATIONS) - {("rds", "DescribeDBInstances")}          # RDS es opt-in (--include-rds): lo prueba test_aws_rds.py
     assert all(c["errors"] == 0 and c["iam_action"] != "?" for c in snap["api_calls"])
     assert next(c for c in snap["api_calls"] if c["operation"] == "GetCostAndUsage")["count"] == 2
     assert snap["meta"]["identity_verified"] is True and snap["meta"]["account_last4"] == "3333" and ACCOUNT not in json.dumps(snap["meta"])

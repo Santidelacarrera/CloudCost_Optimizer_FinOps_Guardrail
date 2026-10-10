@@ -1,0 +1,16 @@
+# Prometheus mínimo para el laboratorio (chart prometheus-community/prometheus): kube-state-metrics + cAdvisor, sin alertas ni almacenamiento persistente.
+# Servicio resultante: monitoring/prometheus-server (puerto 80).
+alertmanager:
+  enabled: false
+prometheus-pushgateway:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+kube-state-metrics:
+  enabled: true
+server:
+  global:
+    scrape_interval: 15s
+  persistentVolume:
+    enabled: false
+  retention: 3d

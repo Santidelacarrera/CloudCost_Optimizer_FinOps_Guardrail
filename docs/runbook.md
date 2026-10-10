@@ -55,3 +55,16 @@ Guía completa (servidor, TLS, imágenes, copias, alertas): [deployment.md](depl
     python -m cloudcost.cli reset-mfa persona@empresa.cl --reason "Verificada por videollamada, ticket 123"
   ```
   Cierra todas sus sesiones, deja el evento `MFA_DISABLED` (con el motivo y `via: operator`) en la auditoría y le avisa por correo. Después debe volver a activar el 2FA desde Cuenta y seguridad.
+
+
+## Anclaje de la auditoría (cada hora o cada día)
+La cadena de hashes no delata que se borren los **últimos** eventos ni que alguien con acceso de propietario a la base la reescriba entera. El ancla externa sí:
+
+```bash
+# en el contenedor de la API (todas las organizaciones requieren DATABASE_ADMIN_URL; si no, repite --org <uuid>)
+docker compose ... exec api python -m cloudcost.cli audit-anchor --file /anclas/audit-anchors.jsonl --webhook https://monitor.ejemplo.cl/anclas
+```
+- Cada ejecución **añade** una línea por organización (cabeza `seq`+`hash`, estado de la cadena) y **comprueba todas las anteriores**. Código de salida 1 si una cabeza anotada ya no existe, si la cadena está rota, si el archivo de anclas fue editado (cada línea encadena la anterior) o si el webhook falla.
+- `--verify-only` solo comprueba. Programa la ejecución con cron/systemd y **alerta si el código de salida no es 0**.
+- **El valor está en dónde guardas el archivo**: copia `audit-anchors.jsonl` a otro servidor o a un bucket con retención/versionado. Si vive en el mismo servidor y con los mismos permisos que la base, quien reescribe la base reescribe también el archivo.
+- Un archivo comprometido nunca se extiende: se informa y se detiene hasta que lo revises.

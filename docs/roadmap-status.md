@@ -47,3 +47,14 @@ Conflictos previsibles: `apps/web/app/(app)/page.tsx` (#10 y #16), `schemas.py`,
 - **Referencias de secreto**: tras #22, `env:` solo admite `CC_SECRET_*` y `aws-sm:` solo `cloudcost/<org_id>/…`. Los colectores de Azure/GCP, GitLab y Kubernetes deben llamar a `secrets.resolve(ref, org_id)` al fusionarse (sin `org_id` se aplica el prefijo pero no el aislamiento por organización).
 - **GitLab**: `is_iac_file` del proveedor solo reconoce `.tf`; ampliarlo a YAML/values para los parches de Helm.
 - **Dependencias web**: ejecutar `npm install` en `apps/web` (el `package-lock.json` quedó obsoleto tras el override de seguridad del PR #7).
+
+
+## Actualización posterior (PR #29)
+| Tema | Estado |
+|---|---|
+| Laboratorios de validación | `aws-lab` (cuenta real: **pendiente**, la cuenta de laboratorio aún no está activada) y `k8s-lab` (minikube: ejecutado con 30 min y 16 h de datos, cargas sintéticas) |
+| Análisis de gasto desde archivo | CSV/Excel; AWS CUR y Cost Explorer, Azure, GCP, FOCUS, sinónimos y columnas a mano; pantalla con gráficos propios. Solo con archivos ficticios |
+| Importación de inventario | 11 servicios (EC2, EBS, snapshots, RDS, Azure vm/disk/snapshot, GCP gce/pd/snapshot, Kubernetes) |
+| RDS en el colector de AWS | Opt-in (`include_rds`), L2; Aurora no se evalúa |
+| Web: tres cifras de ahorro | Estimado, aprobado y observado en la pantalla de cada recomendación (con atribución, límites y líneas base) |
+| Anclaje de la auditoría | `audit-anchor`: archivo de solo-añadir encadenado + webhook + verificación; **falta programarlo y guardar el archivo fuera del servidor** (lista de lanzamiento) |

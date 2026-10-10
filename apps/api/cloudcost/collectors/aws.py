@@ -20,7 +20,7 @@ from statistics import fmean
 from typing import Any, Callable
 
 from ..domain.models import NormalizedResource, environment_from_tags
-from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
+from ..domain.pricing import DAYS_PER_MONTH, instance_monthly_cost, rds_monthly_cost, snapshot_monthly_cost, volume_monthly_cost
 from ..secrets import SecretResolver
 from . import aws_costs, aws_errors, aws_guard
 from .base import CollectionResult, CostRecord
@@ -52,8 +52,10 @@ class AwsCollector:
                  on_api_error=None, session=None, cost_tag_key: str | None = None, cost_history_months: int = 6,
                  cost_metric: str = aws_costs.DEFAULT_METRIC, ce_request_budget: int = aws_costs.DEFAULT_CE_BUDGET,
                  sleep: Callable[[float], None] = time.sleep, today: Callable[[], date] = date.today,
-                 retry_attempts: int = 4):
+                 retry_attempts: int = 4, include_rds: bool | None = None):
         self.account = account
+        cfg = account.get("provider_config") or {}
+        self.include_rds = bool(cfg.get("include_rds")) if include_rds is None else include_rds
         self.secrets = secrets
         self.use_cost_explorer = use_cost_explorer
         self.cost_tag_key = (cost_tag_key or "").strip() or None
@@ -189,7 +191,84 @@ class AwsCollector:
         out += self._instances(ec2, cw, region)
         out += self._volumes(ec2, ct, region)
         out += self._snapshots(ec2, region)
+        if self.include_rds:                                           # opt-in: exige rds:DescribeDBInstances en el rol de solo lectura
+            out += self._rds_instances(self._client("rds", region), cw, region)
         return out
+
+    # ------------------------------------------------------------------ RDS
+    def _rds_instances(self, rds, cw, region) -> list[NormalizedResource]:
+        """Instancias RDS «available» con sus métricas de CPU y conexiones. Las de Aurora/clúster NO se evalúan: borrar un miembro de un clúster
+        no es lo mismo que borrar una base de datos y la regla de «base abandonada» no las contempla."""
+        def fetch():
+            rows = []
+            for page in rds.get_paginator("describe_db_instances").paginate():
+                rows += page["DBInstances"]
+            return rows
+
+        dbs = self._safe("rds:DescribeDBInstances", fetch, [], region=region)
+        clustered = [d for d in dbs if d.get("DBClusterIdentifier") or str(d.get("Engine", "")).startswith("aurora")]
+        if clustered:
+            self.warnings.append(f"{len(clustered)} instancias de Aurora/clúster en {region} no se evalúan (solo bases RDS independientes).")
+        plain = [d for d in dbs if d not in clustered and d.get("DBInstanceStatus") == "available"]
+        metrics = self._rds_metrics(cw, [d["DBInstanceIdentifier"] for d in plain]) if plain else {}
+        out = []
+        for d in plain:
+            ident = d["DBInstanceIdentifier"]
+            tags = _tags(d.get("TagList"))
+            m = metrics.get(ident, {})
+            age = _age_days(d.get("InstanceCreateTime"))
+            observed = min(WINDOW_DAYS, m.get("hours_with_data", 0) // 24, age if age is not None else WINDOW_DAYS)
+            storage, multi_az = d.get("AllocatedStorage"), bool(d.get("MultiAZ"))
+            attrs = {"engine": d.get("Engine"), "multi_az": multi_az, "deletion_protection": bool(d.get("DeletionProtection")),
+                     "backup_retention_days": d.get("BackupRetentionPeriod"),
+                     "read_replicas": bool(d.get("ReadReplicaDBInstanceIdentifiers")) or bool(d.get("ReadReplicaSourceDBInstanceIdentifier"))}
+            attrs.update({k: m[k] for k in ("connections_avg", "connections_max") if k in m})
+            out.append(NormalizedResource(
+                "aws", "database", "rds", ident, region, name=tags.get("Name") or ident, environment=environment_from_tags(tags),
+                instance_type=d.get("DBInstanceClass"), state="available", monthly_cost=rds_monthly_cost(d.get("DBInstanceClass"), storage, multi_az),
+                cost_source="estimate", cpu_avg=m.get("cpu_avg"), cpu_max=m.get("cpu_max"), size_gb=float(storage) if storage is not None else None,
+                age_days=age, observation_days=int(observed), tags=tags, attributes=attrs))
+        return out
+
+    def _rds_metrics(self, cw, identifiers: list[str]) -> dict[str, dict[str, Any]]:
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=WINDOW_DAYS)
+        result: dict[str, dict[str, Any]] = {i: {} for i in identifiers}
+        wanted = (("CPUUtilization", "Average", "cpu_avg"), ("CPUUtilization", "Maximum", "cpu_max"),
+                  ("DatabaseConnections", "Average", "connections_avg"), ("DatabaseConnections", "Maximum", "connections_max"))
+        for chunk_start in range(0, len(identifiers), 25):                      # 4 consultas por base: ≤ 100 por llamada
+            chunk = identifiers[chunk_start: chunk_start + 25]
+            queries, index = [], {}
+            for n, ident in enumerate(chunk):
+                for k, (metric, stat, key) in enumerate(wanted):
+                    qid = f"r{n}_{k}"
+                    index[qid] = (ident, key)
+                    queries.append({"Id": qid, "ReturnData": True, "MetricStat": {
+                        "Metric": {"Namespace": "AWS/RDS", "MetricName": metric, "Dimensions": [{"Name": "DBInstanceIdentifier", "Value": ident}]},
+                        "Period": 3600, "Stat": stat}})
+
+            def fetch(queries=queries):
+                values: dict[str, list[float]] = {}
+                token = None
+                while True:
+                    kw = {"MetricDataQueries": queries, "StartTime": start, "EndTime": end}
+                    if token:
+                        kw["NextToken"] = token
+                    resp = cw.get_metric_data(**kw)
+                    for r in resp["MetricDataResults"]:
+                        values.setdefault(r["Id"], []).extend(r["Values"])
+                    token = resp.get("NextToken")
+                    if not token:
+                        return values
+
+            for qid, vals in self._safe("cloudwatch:GetMetricData", fetch, {}).items():
+                ident, key = index[qid]
+                if not vals:
+                    continue
+                result[ident][key] = round(max(vals) if key.endswith("_max") else fmean(vals), 2)
+                if key == "cpu_avg":
+                    result[ident]["hours_with_data"] = len(vals)
+        return result
 
     # ------------------------------------------------------------------ EC2
     def _instances(self, ec2, cw, region) -> list[NormalizedResource]:

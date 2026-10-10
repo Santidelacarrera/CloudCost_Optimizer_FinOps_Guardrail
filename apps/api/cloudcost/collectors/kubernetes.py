@@ -237,6 +237,7 @@ class KubernetesCollector:
                 "oom_killed": any(oom.get((ns_, p, container), 0) for _, p in pods) or any(oom.get(k, 0) for k in hist),
                 "hpa": (ns_, kind, workload) in hpa,
                 "helm": helm_info, "cpu_hour_usd": self.cpu_hour, "mem_gib_hour_usd": self.mem_hour, "cluster": self.cluster,
+                "age_hours": round(age_days * 24, 1) if age_days is not None else None,
             }
             resources.append(NormalizedResource(
                 "kubernetes", "kubernetes", "k8s_workload", f"{self.cluster}/{ns_}/{kind}/{workload}/{container}", self.cluster,

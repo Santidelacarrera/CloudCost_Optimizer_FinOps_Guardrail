@@ -28,8 +28,16 @@ export default function ImportPage() {
     if (!file) return;
     setBusy(true); setMsg(""); setOk(false);
     try {
-      const csv_text = await file.text();
-      const r = await api<{ rows: number }>("imports", { method: "POST", body: { filename: file.name, csv_text, repository_id: repo || null } });
+      let source: { csv_text: string } | { xlsx_base64: string };
+      if (/\.xlsx$/i.test(file.name)) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        let bin = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        source = { xlsx_base64: btoa(bin) };
+      } else {
+        source = { csv_text: await file.text() };
+      }
+      const r = await api<{ rows: number }>("imports", { method: "POST", body: { filename: file.name, ...source, repository_id: repo || null } });
       setOk(true); setMsg(`Archivo válido: ${r.rows} filas. El análisis está en curso; mira el resultado en el Panel y en Recomendaciones.`);
     } catch (e: any) { setMsg(e.message); } finally { setBusy(false); }
   };
@@ -45,7 +53,7 @@ export default function ImportPage() {
         <div className="row"><button className="secondary" onClick={template}>Descargar plantilla</button></div>
         <h2>Subir archivo</h2>
         <div className="grid" style={{ gridTemplateColumns: "1fr", maxWidth: 520 }}>
-          <input type="file" accept=".csv,text/csv" onChange={(e) => setFile(e.target.files?.[0] ?? null)} aria-label="Archivo CSV" />
+          <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={(e) => setFile(e.target.files?.[0] ?? null)} aria-label="Archivo CSV o Excel" />
           <select value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Repositorio IaC">
             <option value="">Sin repositorio IaC (solo recomendaciones, sin parche)</option>
             {repos.map((r) => <option key={r.id} value={r.id}>{r.full_name} ({r.provider})</option>)}

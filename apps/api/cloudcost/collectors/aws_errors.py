@@ -32,8 +32,8 @@ NETWORK = "network"
 INVALID = "invalid_request"
 OTHER = "other"
 
-_PERMISSION_CODES = {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "UnauthorizedAccess", "AuthorizationError",
-                     "OptInRequired", "SubscriptionRequiredException"}
+_PERMISSION_CODES = {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation", "UnauthorizedAccess", "AuthorizationError"}
+_NOT_ENABLED_CODES = {"OptInRequired", "SubscriptionRequiredException"}    # el servicio no está activado/suscrito en la cuenta: no es un permiso IAM
 _CREDENTIAL_CODES = {"ExpiredToken", "ExpiredTokenException", "InvalidClientTokenId", "InvalidAccessKeyId", "SignatureDoesNotMatch",
                      "AuthFailure", "UnrecognizedClientException", "RegionDisabledException", "InvalidIdentityToken"}
 _THROTTLE_CODES = {"Throttling", "ThrottlingException", "ThrottledException", "RequestLimitExceeded", "TooManyRequestsException",
@@ -46,7 +46,8 @@ _INVALID_CODES = {"ValidationException", "InvalidParameterValue", "InvalidParame
 
 _HINTS = {
     PERMISSION: "Falta un permiso IAM en el rol de solo lectura: revisa la política (infrastructure/terraform/aws-readonly-role).",
-    NOT_ENABLED: "Cost Explorer no está activado en la cuenta (o falta el nivel de recurso): actívalo en Billing → Cost Explorer.",
+    NOT_ENABLED: "El servicio no está activado en la cuenta (cuenta AWS sin activar del todo, o Cost Explorer / su nivel de recurso sin habilitar): "
+                 "completa la activación de la cuenta y habilita Cost Explorer en Billing → Cost Explorer. No es un permiso IAM.",
     CREDENTIALS: "Credenciales caducadas, inválidas o rol no asumible: comprueba el rol, el ExternalId y la confianza.",
     THROTTLED: "AWS limitó las solicitudes incluso tras reintentar: repite el escaneo más tarde o reduce regiones/frecuencia.",
     DATA_UNAVAILABLE: "AWS aún no tiene (o ya eliminó) los datos de ese período: Cost Explorer retrasa hasta 24 h.",
@@ -94,6 +95,8 @@ def classify(exc: BaseException) -> tuple[str, str]:
     name = type(exc).__name__
     if code in _THROTTLE_CODES or name in {"ThrottlingException", "ThrottledException"}:
         return THROTTLED, code
+    if code in _NOT_ENABLED_CODES:
+        return NOT_ENABLED, code
     if code in _PERMISSION_CODES:
         text = _error_message(exc).lower()
         if "cost explorer" in text and ("not enabled" in text or "enable" in text):
@@ -112,9 +115,14 @@ def classify(exc: BaseException) -> tuple[str, str]:
     return OTHER, code
 
 
+ASSUME_ROLE_HINT = ("No se pudo asumir el rol: comprueba (1) que el ExternalId es el mismo que tiene el rol, (2) que la política de confianza "
+                    "del rol admite a esta identidad y (3) que esta identidad puede ejecutar sts:AssumeRole sobre ese ARN.")
+
+
 def issue_from(api: str, exc: BaseException, *, attempts: int = 1, region: str | None = None) -> AwsIssue:
     kind, code = classify(exc)
-    return AwsIssue(api=api, kind=kind, code=code, retryable=kind in (THROTTLED, NETWORK), hint=_HINTS[kind],
+    hint = ASSUME_ROLE_HINT if api == "sts:AssumeRole" and kind in (PERMISSION, CREDENTIALS) else _HINTS[kind]
+    return AwsIssue(api=api, kind=kind, code=code, retryable=kind in (THROTTLED, NETWORK), hint=hint,
                     attempts=attempts, region=region)
 
 

@@ -48,6 +48,7 @@ class LabConfig:
     months: int = 6
     ce_request_budget: int = 40
     use_cost_explorer: bool = True
+    include_rds: bool = False                       # exige rds:DescribeDBInstances en el rol
     cost_tag_key: str | None = None
     anonymize: bool = False
     salt: str | None = None
@@ -116,7 +117,7 @@ def collect_snapshot(cfg: LabConfig, *, session=None, now: datetime | None = Non
     if session is not None:
         recorder.install(session)
     collector = AwsCollector(account, secrets, use_cost_explorer=cfg.use_cost_explorer, session=session, cost_tag_key=cfg.cost_tag_key,
-                             cost_history_months=cfg.months, ce_request_budget=cfg.ce_request_budget,
+                             cost_history_months=cfg.months, ce_request_budget=cfg.ce_request_budget, include_rds=cfg.include_rds,
                              today=(lambda: cfg.today) if cfg.today else date.today, **({"sleep": cfg.sleep} if cfg.sleep else {}))
     aborted: str | None = None
     result = CollectionResult()
@@ -231,15 +232,18 @@ def render_report(snap: dict[str, Any]) -> str:
     a(f"> Generado el {m['generated_at']} con `{m['tool']}` (Python {m['python']}, boto3 {m['boto3']}). {anon}"
       f"Huella de la instantánea: `{snapshot_digest(snap)}`.")
     a("")
-    a("**Cómo reproducir este informe:** `python -m cloudcost.cli aws-lab --from-snapshot snapshot.json` genera exactamente el mismo texto "
+    a("**Cómo reproducir este informe:** `python scripts/aws_lab.py --from-snapshot snapshot.json` genera exactamente el mismo texto "
       "(su SHA-256 está en `report.sha256`). No hace falta acceso a la cuenta.")
     a("")
     a("## 1. Resultado de la validación")
     a("")
     verdict = "**INCOMPLETA**" if m["aborted"] else "**con incidencias**" if issues or snap["partial"] else "**sin incidencias**"
     a(f"- Identidad de la cuenta verificada con `sts:GetCallerIdentity`: {'sí' if m['identity_verified'] else 'no'}.")
-    a(f"- Regiones: {', '.join(m['regions'])}. Cost Explorer: {'activado' if m['cost_explorer'] else 'desactivado'}.")
-    a(f"- Resultado: {verdict}. Inventario {'parcial' if snap['partial'] else 'completo'}.")
+    no_calls = not snap["api_calls"]
+    ce_txt = "no consultado (la validación se interrumpió antes)" if no_calls else "solicitado" if m["cost_explorer"] else "desactivado por opción"
+    inv_txt = "no obtenido (la validación se interrumpió antes de leer)" if no_calls else "parcial" if snap["partial"] else "completo"
+    a(f"- Regiones: {', '.join(m['regions'])}. Cost Explorer: {ce_txt}.")
+    a(f"- Resultado: {verdict}. Inventario {inv_txt}.")
     if m["aborted"]:
         a(f"- Motivo de la interrupción: {_md(m['aborted'])}")
     a("")
@@ -389,9 +393,9 @@ def _cost_tables(a, snap: dict[str, Any]) -> None:
     a("")
 
 
-def write_outputs(snap: dict[str, Any], out_dir: str) -> dict[str, str]:
+def write_outputs(snap: dict[str, Any], out_dir: str, render=None) -> dict[str, str]:
     os.makedirs(out_dir, exist_ok=True)
-    report = render_report(snap)
+    report = (render or render_report)(snap)
     paths = {"snapshot": os.path.join(out_dir, "snapshot.json"), "report": os.path.join(out_dir, "report.md"),
              "digest": os.path.join(out_dir, "report.sha256")}
     with open(paths["snapshot"], "w", encoding="utf-8") as fh:

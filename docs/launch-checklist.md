@@ -27,6 +27,7 @@ Qué está resuelto en el repositorio, qué depende de ti y qué conviene hacer 
 - [ ] Cuenta SMTP y registros SPF, DKIM y DMARC del dominio remitente ([email.md](email.md)); prueba de entrega a la bandeja principal.
 - [ ] `docker login ghcr.io` en el servidor, primera etiqueta `v1.0.0` y primer despliegue.
 - [ ] **Ensayar una restauración** de una copia real en otra máquina (docs/deployment.md §5) y configurar `BACKUP_S3_URI` o copiar el volumen fuera del servidor.
+- [ ] Programar `audit-anchor` (runbook §«Anclaje de la auditoría») y guardar el archivo de anclas fuera del servidor.
 - [ ] `BACKUP_PING_URL` en un monitor externo, y `alertmanager.yml` con tu correo o webhook (hoy trae valores de ejemplo).
 - [ ] Un monitor externo de disponibilidad sobre `https://tu-dominio/login`.
 - [ ] Abogado: revisar y completar `/terms` y `/privacy` (hoy son borradores con [CORCHETES]).

@@ -12,7 +12,23 @@ export type RecDetail = Rec & {
   approvals: { id: string; decision: string; reason: string; approver_role: string; recommendation_version: number; email: string; created_at: string }[];
   timeline: { from_status: string | null; to_status: string; actor_type: string; actor_id: string | null; note: string | null; created_at: string }[];
   pull_request: { number: number; url: string; branch: string; draft: boolean; state: string; diff: string | null; validations: unknown } | null;
-  savings_verification: Record<string, unknown> | null;
+  savings_verification: SavingsVerification | null;
+  savings_figures: SavingsFigures | null;
+  baselines: Baseline[];
+};
+export type SavingsFigures = {
+  estimated_monthly: string | number | null; approved_monthly: string | number | null; approved_at: string | null;
+  observed_monthly: string | number | null; observed_attribution: string | null; observed_data_grade: string | null; observed_confidence: string | null;
+};
+export type SavingsVerification = {
+  expected_monthly_savings: string | number; baseline_monthly_cost: string | number; observed_monthly_cost: string | number;
+  observed_monthly_savings: string | number; raw_observed_monthly_savings?: string | number | null; realization_pct: string | number | null;
+  window_start: string | null; window_end: string | null; method: string; data_grade: string; attribution: string; confidence_grade: string;
+  confounders: unknown[]; limitations: unknown[]; created_at: string;
+};
+export type Baseline = {
+  id: string; phase: string; window_start: string | null; window_end: string | null; days_with_data: number; days_expected: number;
+  monthly_cost: string | number; cost_source: string; data_grade: string; created_at: string;
 };
 export type Summary = {
   monthly_spend: number; potential_savings: number; savings_pct: number; recommendations: number; pending_approval: number;

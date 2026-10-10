@@ -66,3 +66,9 @@ export const clp = (v: string | number | null | undefined) =>
 export const pct1 = (v: string | number) => `${(Number(v) * 100).toFixed(1).replace(".", ",")} %`;
 export const money = (v: string | number | null | undefined, cur = "CLP") =>
   cur === "UF" ? `UF ${new Intl.NumberFormat("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v ?? 0))}` : clp(v);
+
+/** Importe en cualquier moneda ISO (USD, EUR…); si la moneda no es válida, muestra el número con su código. */
+export const moneyIn = (v: string | number | null | undefined, cur = "USD") => {
+  try { return new Intl.NumberFormat("es-CL", { style: "currency", currency: cur, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v ?? 0)); }
+  catch { return `${cur} ${new Intl.NumberFormat("es-CL", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(v ?? 0))}`; }
+};

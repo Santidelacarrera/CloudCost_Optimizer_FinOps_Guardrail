@@ -7,13 +7,13 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import db
-from .auth import mailer
-from .config import get_settings
-from .services import accounts
-
 
 def reset_mfa(args: argparse.Namespace) -> int:
+    from . import db
+    from .auth import mailer
+    from .config import get_settings
+    from .services import accounts
+
     settings = get_settings()
     outbox: list[mailer.Mail] = []
     db.init_pool()
@@ -42,7 +42,7 @@ def aws_lab(args: argparse.Namespace) -> int:
             return 2
         cfg = lab.LabConfig(account_ref=args.account_ref, regions=[r.strip() for r in args.regions.split(",") if r.strip()], role_arn=args.role_arn,
                             external_id_env=args.external_id_env, months=args.months, ce_request_budget=args.ce_budget,
-                            use_cost_explorer=not args.no_cost_explorer, cost_tag_key=args.cost_tag_key, anonymize=args.anonymize,
+                            use_cost_explorer=not args.no_cost_explorer, include_rds=args.include_rds, cost_tag_key=args.cost_tag_key, anonymize=args.anonymize,
                             salt=args.salt, scale=args.scale)
         snap = lab.collect_snapshot(cfg)
     paths = lab.write_outputs(snap, args.out_dir)
@@ -50,6 +50,120 @@ def aws_lab(args: argparse.Namespace) -> int:
         print(f"{kind}: {path}")
     print(f"huella de la instantánea: {lab.snapshot_digest(snap)}")
     return 0 if not snap["meta"]["aborted"] else 1
+
+
+def k8s_lab(args: argparse.Namespace) -> int:
+    """Valida el colector de Kubernetes contra un clúster de laboratorio (minikube) y genera un informe reproducible. No usa la base de datos."""
+    from . import k8s_lab as lab
+
+    if args.from_snapshot:
+        snap = lab.load_snapshot(args.from_snapshot)
+    else:
+        snap = lab.collect_snapshot(cluster_ref=args.cluster_ref, prometheus_url=args.prometheus_url,
+                                    namespaces=[n.strip() for n in args.namespaces.split(",") if n.strip()],
+                                    min_observation_days=args.min_observation_days, cpu_hour=args.cpu_hour, mem_gib_hour=args.mem_gib_hour)
+    paths = lab.write(snap, args.out_dir)
+    for kind, path in paths.items():
+        print(f"{kind}: {path}")
+    print(f"huella de la instantánea: {lab.snapshot_digest(snap)}")
+    failed = [c for c in snap.get("checks", []) if c["result"] != "OK"]
+    for c in failed:
+        print(f"comprobación fallida: {c['workload']} — {c['expected']} (ocurrió: {c['observed']})", file=sys.stderr)
+    return 0 if not snap["meta"]["aborted"] and not failed else 1
+
+
+def expenses(args: argparse.Namespace) -> int:
+    """Analiza archivos de gastos (CSV o Excel .xlsx; exportaciones de AWS/Azure/GCP incluidas) y escribe un informe. No usa la base de datos."""
+    import json
+    import os
+
+    from .expenses import ExpenseFormatError, analyze_documents
+    from .expenses.report import render_markdown
+    from .expenses.xlsx import xlsx_to_csv_texts
+
+    docs: list[tuple[str, str]] = []
+    columns = {}
+    for pair in args.columns or []:
+        key, _, value = pair.partition("=")
+        columns[key.strip()] = value.strip()
+    try:
+        for path in args.files:
+            name = os.path.basename(path)
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            if name.lower().endswith((".xlsx", ".xlsm")) or raw.startswith(b"PK\x03\x04"):
+                docs.extend(xlsx_to_csv_texts(raw, name))
+            else:
+                try:
+                    docs.append((name, raw.decode("utf-8")))
+                except UnicodeDecodeError:
+                    docs.append((name, raw.decode("windows-1252")))             # CSV de Excel en Windows
+    except (OSError, ExpenseFormatError) as exc:
+        print(f"No se pudo leer el archivo: {exc}", file=sys.stderr)
+        return 2
+    result, err = analyze_documents(docs, columns)
+    if err:
+        for line in err["errors"]:
+            print(line, file=sys.stderr)
+        return 1
+    os.makedirs(args.out_dir, exist_ok=True)
+    with open(os.path.join(args.out_dir, "report.md"), "w", encoding="utf-8") as fh:
+        fh.write(render_markdown(result))
+    with open(os.path.join(args.out_dir, "result.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=1, sort_keys=True)
+    print(f"report: {os.path.join(args.out_dir, 'report.md')}")
+    print(f"hallazgos: {result['total_findings']} · nube: {len(result['cloud'])} · estados: {len(result['statements'])}")
+    return 0
+
+
+def audit_anchor(args: argparse.Namespace) -> int:
+    """Anota la cabeza de la auditoría de cada organización en un archivo de solo-añadir (y opcionalmente en un webhook) y comprueba las anteriores."""
+    import json
+
+    import requests
+
+    from . import db
+    from .services import audit_anchor as anchor
+
+    previous = anchor.read_file(args.file)
+    problems = anchor.check_file_chain(previous)
+    code = 0
+    for p in problems:
+        print(f"ARCHIVO DE ANCLAS: {p}", file=sys.stderr)
+        code = 1
+    db.init_pool()
+    try:
+        checks = anchor.verify_anchors(previous)
+        for c in checks:
+            if not c["ok"]:
+                print(f"ANCLA FALLIDA org={c['org_id']} seq={c['head_seq']} ({c['anchored_at']}): {c['reason']}", file=sys.stderr)
+                code = 1
+        prev_hash = previous[-1]["line_hash"] if previous and not problems else anchor.GENESIS
+        entries = [] if args.verify_only else anchor.make_entries(args.org or None, prev_hash)
+    except anchor.NoAdminAccess as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    finally:
+        db.close_pool()
+    for e in entries:
+        if not e["chain_ok"]:
+            print(f"CADENA ROTA org={e['org_id']} primer eslabón alterado: seq {e['first_bad_seq']}", file=sys.stderr)
+            code = 1
+    if entries and not problems:
+        with open(args.file, "a", encoding="utf-8") as fh:
+            for e in entries:
+                fh.write(json.dumps(e, sort_keys=True, ensure_ascii=False) + "\n")
+    if entries and args.webhook:
+        try:
+            resp = requests.post(args.webhook, json={"anchors": entries}, timeout=10, allow_redirects=False)
+            if resp.status_code >= 300:
+                print(f"El webhook respondió HTTP {resp.status_code}", file=sys.stderr)
+                code = 1
+        except requests.RequestException as exc:
+            print(f"No se pudo avisar al webhook ({type(exc).__name__})", file=sys.stderr)
+            code = 1
+    print(f"ancladas: {len(entries)} · anclas anteriores comprobadas: {len(checks)} · fallidas: {sum(1 for c in checks if not c['ok'])}")
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
     lab_p.add_argument("--months", type=int, default=6, help="Meses de historial de coste (1-12)")
     lab_p.add_argument("--ce-budget", type=int, default=40, help="Máximo de solicitudes a Cost Explorer (cada una cuesta USD 0,01)")
     lab_p.add_argument("--no-cost-explorer", action="store_true", help="No llamar a Cost Explorer (solo inventario y métricas)")
+    lab_p.add_argument("--include-rds", action="store_true", help="Inventaría también las bases RDS (requiere rds:DescribeDBInstances en el rol)")
     lab_p.add_argument("--cost-tag-key", help="Etiqueta de asignación de costos para el historial por etiqueta")
     lab_p.add_argument("--anonymize", action="store_true", help="Seudonimiza identificadores y descarta valores de etiquetas")
     lab_p.add_argument("--salt", help="Sal de la seudonimización (por defecto, aleatoria y no se guarda)")
@@ -74,6 +189,28 @@ def main(argv: list[str] | None = None) -> int:
     lab_p.add_argument("--out-dir", default="lab-out")
     lab_p.add_argument("--from-snapshot", help="Regenera el informe a partir de una instantánea (sin acceso a AWS)")
     lab_p.set_defaults(func=aws_lab)
+    k_p = sub.add_parser("k8s-lab", help="Valida el colector de Kubernetes contra un clúster de laboratorio (minikube) y genera un informe reproducible")
+    k_p.add_argument("--cluster-ref", default="minikube", help="Nombre del clúster en los informes")
+    k_p.add_argument("--prometheus-url", default="http://localhost:9090", help="Prometheus del clúster (con kubectl port-forward)")
+    k_p.add_argument("--namespaces", default="lab-dev", help="Namespaces a evaluar, separados por comas")
+    k_p.add_argument("--min-observation-days", type=int, help="Reduce el umbral de días de datos (solo laboratorio; el producto usa 7)")
+    k_p.add_argument("--cpu-hour", type=float, help="USD por núcleo-hora para valorar lo reservado")
+    k_p.add_argument("--mem-gib-hour", type=float, help="USD por GiB-hora para valorar lo reservado")
+    k_p.add_argument("--out-dir", default="k8s-lab-out")
+    k_p.add_argument("--from-snapshot", help="Regenera el informe a partir de una instantánea (sin acceso al clúster)")
+    k_p.set_defaults(func=k8s_lab)
+    e_p = sub.add_parser("expenses", help="Analiza gastos desde CSV o Excel (.xlsx), incluidas exportaciones de facturación de AWS/Azure/GCP")
+    e_p.add_argument("files", nargs="+", help="Uno o varios archivos (varios meses se comparan entre sí)")
+    e_p.add_argument("--columns", nargs="+", metavar="CAMPO=COLUMNA",
+                     help="Para facturas de nube con otras cabeceras: date=Fecha cost=Importe service=Producto [region=… account=… currency=…]")
+    e_p.add_argument("--out-dir", default="gastos-out")
+    e_p.set_defaults(func=expenses)
+    a_p = sub.add_parser("audit-anchor", help="Anota la cabeza de la auditoría fuera de la base y comprueba las anotaciones anteriores")
+    a_p.add_argument("--file", default="audit-anchors.jsonl", help="Archivo de solo-añadir (guárdalo en OTRO servidor o bucket con retención)")
+    a_p.add_argument("--org", action="append", help="UUID de una organización (repetible); por defecto, todas")
+    a_p.add_argument("--webhook", help="URL https que recibe las anclas nuevas (p. ej. un monitor externo)")
+    a_p.add_argument("--verify-only", action="store_true", help="Solo comprueba las anclas anteriores; no añade nuevas")
+    a_p.set_defaults(func=audit_anchor)
     args = parser.parse_args(argv)
     return args.func(args)
 

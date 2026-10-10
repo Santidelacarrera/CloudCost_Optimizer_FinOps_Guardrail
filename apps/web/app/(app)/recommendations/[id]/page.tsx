@@ -4,6 +4,7 @@ import { api, fmtDate, pct, usd } from "@/lib/api";
 import type { RecDetail } from "@/lib/types";
 import Badge from "@/components/Badge";
 import PageHead from "@/components/PageHead";
+import SavingsFigures from "@/components/SavingsFigures";
 
 function Diff({ text }: { text: string }) {
   return (
@@ -48,6 +49,8 @@ export default function Detail({ params }: { params: Promise<{ id: string }> }) 
         <div className="total"><div className="v">{pct(r.confidence)}</div><div className="l">Confianza</div></div>
         <div className="total"><div className="v">{r.approvals.filter((a) => a.decision === "APPROVED" && a.recommendation_version === r.version).length} de {r.approvals_required}</div><div className="l">Aprobaciones recibidas</div></div>
       </div>
+
+      {r.savings_figures && <SavingsFigures figures={r.savings_figures} verification={r.savings_verification} baselines={r.baselines ?? []} />}
 
       <h2>Por qué</h2>
       <div className="card">

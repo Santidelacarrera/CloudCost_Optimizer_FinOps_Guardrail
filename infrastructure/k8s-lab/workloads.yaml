@@ -1,0 +1,80 @@
+# Cargas sintéticas del laboratorio de Kubernetes (minikube). Ver docs/k8s-lab-validation.md.
+# Cada una tiene un comportamiento esperado que `k8s-lab` comprueba en el informe (sección «Comprobaciones del laboratorio»).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-dev
+---
+# Reserva 500m / 512Mi por réplica y casi no usa nada → DEBE proponer bajar CPU y memoria.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: overprovisioned-web
+  namespace: lab-dev
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: overprovisioned-web } }
+  template:
+    metadata: { labels: { app: overprovisioned-web } }
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-alpine
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+---
+# Consume ~todo lo que pide (bucle de CPU acotado por el límite) → NO debe proponer nada.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: well-sized
+  namespace: lab-dev
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: well-sized } }
+  template:
+    metadata: { labels: { app: well-sized } }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "while true; do :; done"]
+          resources:
+            requests: { cpu: 100m, memory: 64Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+---
+# Con HPA: la CPU fija el % que escala, así que NO se toca; la memoria (768Mi × 3 réplicas, uso mínimo) SÍ.
+# (El ahorro de memoria tiene que superar el mínimo del producto, USD 5/mes, por eso 3 réplicas de 768Mi.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hpa-protected
+  namespace: lab-dev
+spec:
+  replicas: 3
+  selector: { matchLabels: { app: hpa-protected } }
+  template:
+    metadata: { labels: { app: hpa-protected } }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "while true; do :; done"]
+          resources:
+            requests: { cpu: 200m, memory: 768Mi }
+            limits: { cpu: 200m, memory: 768Mi }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-protected
+  namespace: lab-dev
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: hpa-protected }
+  minReplicas: 3
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      # 150 % nunca se alcanza (uso ≤ 100 % de lo pedido): las réplicas no cambian durante el laboratorio
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 150 } }
