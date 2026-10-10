@@ -12,7 +12,7 @@ Cada fila cita la prueba que la sostiene. Si algo no figura aquí, no está sopo
 | **L2** | Probado con respuestas **validadas por el modelo oficial de la API** (botocore `Stubber`: rechaza parámetros inexistentes, valores fuera de rango y respuestas que no cumplen el esquema) |
 | **L3** | Ejecutado contra una **cuenta/entorno real** con informe reproducible adjunto |
 
-Ningún elemento de esta página está en L3 a fecha de este documento. Para AWS existe la herramienta que lo consigue en una tarde: [aws-lab-validation.md](aws-lab-validation.md).
+Solo Kubernetes está en L3, y de forma limitada (minikube local, cargas sintéticas, 30 min de datos: [resultado](lab-results/k8s-minikube-2026-10-10.md)); AWS y el resto no. Para AWS existe la herramienta que lo consigue en una tarde: [aws-lab-validation.md](aws-lab-validation.md).
 
 ## AWS
 
@@ -55,7 +55,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 |---|---|---|---|
 | Azure | VM, discos administrados, snapshots (REST); métricas de Azure Monitor | L1 | Coste = tabla de precios (sin coste real). Sin pruebas contra una suscripción real |
 | GCP | Compute Engine, discos persistentes, snapshots; Cloud Monitoring | L1 | Coste = tabla de precios. Sin pruebas contra un proyecto real |
-| Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L1 | No habla con la API de Kubernetes. Herramienta para validarlo en un clúster real local: `python scripts/k8s_lab.py` ([guía](k8s-lab-validation.md)); **todavía sin ejecutar** |
+| Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L3 (limitado) | No habla con la API de Kubernetes. Ejecutado contra minikube + Prometheus real el 2026-10-10 ([resultado](lab-results/k8s-minikube-2026-10-10.md)): 3 de 3 comprobaciones; solo 30 min de datos, sin facturación real. Repetir con ≥ 24 h |
 | CSV importado | EC2, EBS, snapshots con uso y coste (≤ 5 000 filas / 2 MB) | L1 | Coste del archivo tratado como verificado |
 | Demostración | 21 recursos sintéticos de AWS | — | Solo con `DEMO_ENABLED=true` (prohibido en producción) |
 
@@ -72,7 +72,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 
 1. **AWS L2 → L3**: ejecutar `python scripts/aws_lab.py` contra una cuenta de laboratorio y adjuntar `report.md`/`snapshot.json`.
 2. **RDS**: inventario real (`DescribeDBInstances` + `AWS/RDS` en CloudWatch). Hoy no existe.
-3. **Kubernetes L1 → L3**: ejecutar `python scripts/k8s_lab.py` contra minikube ([k8s-lab-validation.md](k8s-lab-validation.md)); gratis y sin cuenta. **Azure/GCP**: cuentas de laboratorio, como en AWS.
+3. **Kubernetes**: repetir el laboratorio con ≥ 24 h de datos y, después, en un clúster real de equipo. **Azure/GCP**: cuentas de laboratorio, como en AWS.
 4. **Cuentas múltiples**: descubrimiento de cuentas vinculadas y un rol por cuenta.
 
 Hasta entonces, esta página y el README dicen lo mismo: lo no validado contra un sistema real se presenta como no validado.
