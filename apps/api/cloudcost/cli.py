@@ -116,6 +116,56 @@ def expenses(args: argparse.Namespace) -> int:
     return 0
 
 
+def audit_anchor(args: argparse.Namespace) -> int:
+    """Anota la cabeza de la auditoría de cada organización en un archivo de solo-añadir (y opcionalmente en un webhook) y comprueba las anteriores."""
+    import json
+
+    import requests
+
+    from . import db
+    from .services import audit_anchor as anchor
+
+    previous = anchor.read_file(args.file)
+    problems = anchor.check_file_chain(previous)
+    code = 0
+    for p in problems:
+        print(f"ARCHIVO DE ANCLAS: {p}", file=sys.stderr)
+        code = 1
+    db.init_pool()
+    try:
+        checks = anchor.verify_anchors(previous)
+        for c in checks:
+            if not c["ok"]:
+                print(f"ANCLA FALLIDA org={c['org_id']} seq={c['head_seq']} ({c['anchored_at']}): {c['reason']}", file=sys.stderr)
+                code = 1
+        prev_hash = previous[-1]["line_hash"] if previous and not problems else anchor.GENESIS
+        entries = [] if args.verify_only else anchor.make_entries(args.org or None, prev_hash)
+    except anchor.NoAdminAccess as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    finally:
+        db.close_pool()
+    for e in entries:
+        if not e["chain_ok"]:
+            print(f"CADENA ROTA org={e['org_id']} primer eslabón alterado: seq {e['first_bad_seq']}", file=sys.stderr)
+            code = 1
+    if entries and not problems:
+        with open(args.file, "a", encoding="utf-8") as fh:
+            for e in entries:
+                fh.write(json.dumps(e, sort_keys=True, ensure_ascii=False) + "\n")
+    if entries and args.webhook:
+        try:
+            resp = requests.post(args.webhook, json={"anchors": entries}, timeout=10, allow_redirects=False)
+            if resp.status_code >= 300:
+                print(f"El webhook respondió HTTP {resp.status_code}", file=sys.stderr)
+                code = 1
+        except requests.RequestException as exc:
+            print(f"No se pudo avisar al webhook ({type(exc).__name__})", file=sys.stderr)
+            code = 1
+    print(f"ancladas: {len(entries)} · anclas anteriores comprobadas: {len(checks)} · fallidas: {sum(1 for c in checks if not c['ok'])}")
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m cloudcost.cli", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -155,6 +205,12 @@ def main(argv: list[str] | None = None) -> int:
                      help="Para facturas de nube con otras cabeceras: date=Fecha cost=Importe service=Producto [region=… account=… currency=…]")
     e_p.add_argument("--out-dir", default="gastos-out")
     e_p.set_defaults(func=expenses)
+    a_p = sub.add_parser("audit-anchor", help="Anota la cabeza de la auditoría fuera de la base y comprueba las anotaciones anteriores")
+    a_p.add_argument("--file", default="audit-anchors.jsonl", help="Archivo de solo-añadir (guárdalo en OTRO servidor o bucket con retención)")
+    a_p.add_argument("--org", action="append", help="UUID de una organización (repetible); por defecto, todas")
+    a_p.add_argument("--webhook", help="URL https que recibe las anclas nuevas (p. ej. un monitor externo)")
+    a_p.add_argument("--verify-only", action="store_true", help="Solo comprueba las anclas anteriores; no añade nuevas")
+    a_p.set_defaults(func=audit_anchor)
     args = parser.parse_args(argv)
     return args.func(args)
 
