@@ -112,9 +112,14 @@ def classify(exc: BaseException) -> tuple[str, str]:
     return OTHER, code
 
 
+ASSUME_ROLE_HINT = ("No se pudo asumir el rol: comprueba (1) que el ExternalId es el mismo que tiene el rol, (2) que la política de confianza "
+                    "del rol admite a esta identidad y (3) que esta identidad puede ejecutar sts:AssumeRole sobre ese ARN.")
+
+
 def issue_from(api: str, exc: BaseException, *, attempts: int = 1, region: str | None = None) -> AwsIssue:
     kind, code = classify(exc)
-    return AwsIssue(api=api, kind=kind, code=code, retryable=kind in (THROTTLED, NETWORK), hint=_HINTS[kind],
+    hint = ASSUME_ROLE_HINT if api == "sts:AssumeRole" and kind in (PERMISSION, CREDENTIALS) else _HINTS[kind]
+    return AwsIssue(api=api, kind=kind, code=code, retryable=kind in (THROTTLED, NETWORK), hint=hint,
                     attempts=attempts, region=region)
 
 

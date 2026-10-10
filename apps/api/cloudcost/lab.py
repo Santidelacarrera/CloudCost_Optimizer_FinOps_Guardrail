@@ -231,15 +231,18 @@ def render_report(snap: dict[str, Any]) -> str:
     a(f"> Generado el {m['generated_at']} con `{m['tool']}` (Python {m['python']}, boto3 {m['boto3']}). {anon}"
       f"Huella de la instantánea: `{snapshot_digest(snap)}`.")
     a("")
-    a("**Cómo reproducir este informe:** `python -m cloudcost.cli aws-lab --from-snapshot snapshot.json` genera exactamente el mismo texto "
+    a("**Cómo reproducir este informe:** `python scripts/aws_lab.py --from-snapshot snapshot.json` genera exactamente el mismo texto "
       "(su SHA-256 está en `report.sha256`). No hace falta acceso a la cuenta.")
     a("")
     a("## 1. Resultado de la validación")
     a("")
     verdict = "**INCOMPLETA**" if m["aborted"] else "**con incidencias**" if issues or snap["partial"] else "**sin incidencias**"
     a(f"- Identidad de la cuenta verificada con `sts:GetCallerIdentity`: {'sí' if m['identity_verified'] else 'no'}.")
-    a(f"- Regiones: {', '.join(m['regions'])}. Cost Explorer: {'activado' if m['cost_explorer'] else 'desactivado'}.")
-    a(f"- Resultado: {verdict}. Inventario {'parcial' if snap['partial'] else 'completo'}.")
+    no_calls = not snap["api_calls"]
+    ce_txt = "no consultado (la validación se interrumpió antes)" if no_calls else "activado" if m["cost_explorer"] else "desactivado"
+    inv_txt = "no obtenido (la validación se interrumpió antes de leer)" if no_calls else "parcial" if snap["partial"] else "completo"
+    a(f"- Regiones: {', '.join(m['regions'])}. Cost Explorer: {ce_txt}.")
+    a(f"- Resultado: {verdict}. Inventario {inv_txt}.")
     if m["aborted"]:
         a(f"- Motivo de la interrupción: {_md(m['aborted'])}")
     a("")
