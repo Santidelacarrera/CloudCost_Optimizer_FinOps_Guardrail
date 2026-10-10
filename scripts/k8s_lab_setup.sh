@@ -2,7 +2,8 @@
 # Levanta el laboratorio de Kubernetes en minikube (macOS/Linux). Ver docs/k8s-lab-validation.md. Para borrarlo todo: minikube delete
 set -euo pipefail
 for tool in minikube kubectl helm; do command -v "$tool" >/dev/null || { echo "Falta '$tool' en el PATH" >&2; exit 1; }; done
-minikube start --cpus 4 --memory 6144
+docker info >/dev/null 2>&1 || { echo "Docker no responde: arráncalo y vuelve a ejecutar" >&2; exit 1; }
+minikube start --driver=docker --cpus 4 --memory 6144
 minikube addons enable metrics-server
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo update
