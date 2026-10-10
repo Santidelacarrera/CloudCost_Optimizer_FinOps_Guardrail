@@ -239,7 +239,7 @@ def render_report(snap: dict[str, Any]) -> str:
     verdict = "**INCOMPLETA**" if m["aborted"] else "**con incidencias**" if issues or snap["partial"] else "**sin incidencias**"
     a(f"- Identidad de la cuenta verificada con `sts:GetCallerIdentity`: {'sí' if m['identity_verified'] else 'no'}.")
     no_calls = not snap["api_calls"]
-    ce_txt = "no consultado (la validación se interrumpió antes)" if no_calls else "activado" if m["cost_explorer"] else "desactivado"
+    ce_txt = "no consultado (la validación se interrumpió antes)" if no_calls else "solicitado" if m["cost_explorer"] else "desactivado por opción"
     inv_txt = "no obtenido (la validación se interrumpió antes de leer)" if no_calls else "parcial" if snap["partial"] else "completo"
     a(f"- Regiones: {', '.join(m['regions'])}. Cost Explorer: {ce_txt}.")
     a(f"- Resultado: {verdict}. Inventario {inv_txt}.")

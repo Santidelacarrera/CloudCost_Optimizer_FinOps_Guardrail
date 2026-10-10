@@ -437,3 +437,14 @@ def test_multiple_rows_of_the_same_day_are_added_before_judging_the_series():
 def test_empty_series_is_safe():
     rc = aws_costs.ResourceCost()
     assert rc.quality_flags() == [] and rc.monthly_estimate(30.0) == 0.0 and rc.values() == []
+
+
+def test_optin_and_subscription_errors_are_not_enabled_not_permission():
+    from botocore.exceptions import ClientError
+    from cloudcost.collectors import aws_errors
+
+    for code in ("OptInRequired", "SubscriptionRequiredException"):
+        exc = ClientError({"Error": {"Code": code, "Message": "x"}}, "Op")
+        assert aws_errors.classify(exc)[0] == aws_errors.NOT_ENABLED
+    exc = ClientError({"Error": {"Code": "AccessDenied", "Message": "x"}}, "Op")
+    assert aws_errors.classify(exc)[0] == aws_errors.PERMISSION
