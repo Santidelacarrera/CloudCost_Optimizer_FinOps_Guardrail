@@ -34,7 +34,7 @@ def analyze_expenses(body: ExpenseAnalyzeIn, p: Principal = Depends(require(*SCA
             problems.append(f"{f.filename}: {exc}" if isinstance(exc, ExpenseFormatError) else f"{f.filename}: el contenido no es un Excel válido")
     if problems:
         raise HTTPException(422, {"message": "No se pudo interpretar el archivo", "errors": problems})
-    result, err = analyze_documents(docs)
+    result, err = analyze_documents(docs, body.columns)
     if err:
         raise HTTPException(422, {"message": "No se pudo interpretar el archivo", "errors": err["errors"]})
     with tenant_tx(p.org_id) as conn:

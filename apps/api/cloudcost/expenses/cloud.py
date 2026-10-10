@@ -38,6 +38,7 @@ SPIKE_MIN_DAYS = 14
 CONCENTRATION_SHARE = Decimal("0.50")
 UNCLASSIFIED_SHARE = Decimal("0.05")
 MAX_TOP = 25
+MAX_DAILY_POINTS = 400
 
 _CREDIT_KINDS = {"credit", "refund", "edpdiscount", "bundleddiscount", "privaterediscount", "discount", "adjustment"}
 
@@ -130,6 +131,11 @@ def _long_format(keys: list[str]) -> dict | None:
                 "date": p("usagestarttime", "invoicemonth"), "service": keys.index("servicedescription"),
                 "region": p("locationregion", "locationlocation", "locationzone"), "account": p("projectid", "projectname", "billingaccountid"),
                 "group": None, "currency": p("currency"), "kind": p("costtype")}
+    if "billedcost" in keys and "chargeperiodstart" in keys and "servicename" in keys:           # FOCUS (FinOps Foundation): AWS, Azure, GCP, OCI
+        return {"provider": "focus", "provider_col": p("providername", "providerid"), "fmt": "focus", "cost": keys.index("billedcost"),
+                "date": keys.index("chargeperiodstart"), "service": keys.index("servicename"), "region": p("regionname", "regionid"),
+                "account": p("subaccountname", "subaccountid", "billingaccountname", "billingaccountid"), "group": p("servicecategory"),
+                "currency": p("billingcurrency"), "kind": p("chargecategory")}
     if any(k in keys for k in ("metercategory", "costinbillingcurrency", "pretaxcost")):
         cost = p("costinbillingcurrency", "pretaxcost", "costinusd", "cost")
         date_ = p("date", "usagedatetime", "usagedate", "billingperiodstartdate")
@@ -141,6 +147,55 @@ def _long_format(keys: list[str]) -> dict | None:
                     "group": p("resourcegroup", "resourcegroupname"), "currency": p("billingcurrencycode", "billingcurrency", "currency"),
                     "kind": None}
     return None
+
+
+# Sinónimos para tablas de facturación con otras cabeceras. Se exige fecha + un costo «de verdad» (cost/costo/charge…) + un servicio/producto;
+# así «Proveedor / Concepto / Importe» de un estado de gastos NO se confunde con una factura de nube.
+_SYN = {
+    "date": ("date", "fecha", "day", "dia", "usagedate", "usagedatetime", "usagestartdate", "usagestarttime", "chargeperiodstart", "billingmonth",
+             "invoicemonth", "startdate", "period", "periodo", "month", "mes"),
+    "cost": ("cost", "costo", "costs", "costos", "netcost", "totalcost", "costototal", "charge", "charges", "cargo", "cargos", "unblendedcost",
+             "billedcost", "effectivecost", "pretaxcost", "costinbillingcurrency", "costusd"),
+    "service": ("service", "servicio", "servicename", "nombredelservicio", "servicedescription", "product", "producto", "productname", "metercategory",
+                "sku", "skudescription", "servicecategory"),
+    "region": ("region", "regionname", "regionid", "location", "locationregion", "resourcelocation", "zona", "ubicacion"),
+    "account": ("account", "cuenta", "accountid", "accountname", "subscription", "suscripcion", "subscriptionid", "subscriptionname", "project",
+                "proyecto", "projectid", "linkedaccount", "subaccountid", "subaccountname"),
+    "group": ("resourcegroup", "grupo", "grupoderecursos", "team", "equipo", "costcenter", "centrodecosto", "area", "environment", "entorno"),
+    "currency": ("currency", "moneda", "currencycode", "billingcurrency", "billingcurrencycode"),
+    "kind": ("chargetype", "chargecategory", "costtype", "recordtype", "tipodecargo"),
+}
+_CLOUDISH = re.compile(
+    r"(?i)\b(amazon|aws|azure|google|gcp|gce|cloud|compute|storage|ec2|s3|rds|ebs|vm|virtual machines?|lambda|bigquery|kubernetes|gke|eks|aks|"
+    r"blob|cdn|route ?53|dynamodb|cosmos|sql database|app service|functions?|data transfer|bandwidth|vpc|nat gateway|load balancer|cloudwatch|"
+    r"cloudfront|redshift|elasticache|monitor|key vault|support|marketplace)\b")
+MAPPING_FIELDS = ("date", "cost", "service", "region", "account", "group", "currency", "kind")
+
+
+def _generic_format(keys: list[str]) -> dict | None:
+    pick = {f: _pick(keys, *cands) for f, cands in _SYN.items()}
+    if pick["date"] is None or pick["cost"] is None or pick["service"] is None:
+        return None
+    return {"provider": "other", "fmt": "generic_billing", **pick}
+
+
+def _mapped_format(header: list[str], mapping: dict[str, str]) -> dict | None:
+    """Columnas elegidas a mano por el usuario ({campo: nombre de columna}). None si esta fila no es la cabecera."""
+    keys = [_k(c) for c in header]
+    spec: dict = {"provider": "other", "fmt": "mapped_billing", "region": None, "account": None, "group": None, "currency": None, "kind": None}
+    for fld in MAPPING_FIELDS:
+        wanted = mapping.get(fld)
+        if not wanted:
+            continue
+        idx = _pick(keys, _k(wanted))
+        if idx is None:
+            if fld in ("date", "cost", "service"):
+                return None
+            raise ExpenseFormatError(f"No existe la columna «{wanted}» (campo {fld}). Columnas del archivo: {', '.join(c for c in header if c)[:300]}")
+        spec[fld] = idx
+    if any(spec.get(f) is None for f in ("date", "cost", "service")):
+        return None
+    return spec
 
 
 _CE_DIMS = {"service", "region", "linkedaccount", "usagetype", "usagetypegroup", "instancetype", "recordtype", "availabilityzone",
@@ -171,17 +226,30 @@ def _wide_format(header: list[str]) -> list[tuple[int, date | None, str, str]] |
     return cols or None
 
 
-def detect_cloud(rows: list[list[str]], filename: str = "") -> CloudExport | None:
-    """CloudExport si el archivo es una exportación de facturación de nube; None si es otra cosa (p. ej. un estado de gastos)."""
+def detect_cloud(rows: list[list[str]], filename: str = "", columns: dict[str, str] | None = None) -> CloudExport | None:
+    """CloudExport si el archivo es una exportación de facturación de nube; None si es otra cosa (p. ej. un estado de gastos).
+
+    `columns` ({campo: nombre de columna}) fuerza la lectura de una tabla con cabeceras propias: date, cost y service son obligatorios.
+    """
     if len(rows) > CLOUD_MAX_ROWS + 20:
         return None
+    if columns:
+        for hi, header in enumerate(rows[:15]):
+            if (spec := _mapped_format(header, columns)) is not None:
+                return _parse_long(rows[hi + 1:], spec, filename, header)
+        raise ExpenseFormatError("No se encontró una fila de cabecera con las columnas indicadas (fecha, costo y servicio)")
     for hi, header in enumerate(rows[:15]):
         if len([c for c in header if c]) < 3:
             continue
         keys = [_k(c) for c in header]
         spec = _long_format(keys)
         if spec:
-            return _parse_long(rows[hi + 1:], spec, filename)
+            return _parse_long(rows[hi + 1:], spec, filename, header)
+        if generic := _generic_format(keys):
+            # Por cabeceras sinónimas solo se acepta si los servicios PARECEN de nube: «Fecha / Servicio / Costo» también lo usa un edificio.
+            names = [_cell(r, generic["service"]) for r in rows[hi + 1:hi + 401] if any(c.strip() for c in r)]
+            if names and sum(1 for n in names if _CLOUDISH.search(n)) / len(names) >= 0.3:
+                return _parse_long(rows[hi + 1:], generic, filename, header)
         wide = _wide_format(header)
         if wide:
             return _parse_wide(header, rows[hi + 1:], wide, filename)
@@ -192,9 +260,11 @@ def _cell(row: list[str], idx: int | None) -> str:
     return row[idx].strip() if idx is not None and idx < len(row) else ""
 
 
-def _parse_long(rows: list[list[str]], spec: dict, filename: str) -> CloudExport:
+def _parse_long(rows: list[list[str]], spec: dict, filename: str, header: list[str] | None = None) -> CloudExport:
     out: list[CloudRow] = []
     notes: list[str] = []
+    header = header or []
+    header_names = {f: (header[spec[f]] if spec.get(f) is not None and spec[f] < len(header) else "—") for f in ("date", "cost", "service")}
     currencies: set[str] = set()
     bad_amount = bad_date = 0
     ambiguous = False
@@ -230,10 +300,20 @@ def _parse_long(rows: list[list[str]], spec: dict, filename: str) -> CloudExport
     if len(currencies) > 1:
         raise ExpenseFormatError(f"El archivo mezcla monedas ({', '.join(sorted(currencies))}): sepáralo por moneda para no sumarlas entre sí")
     currency = next(iter(currencies), "")
+    provider = spec["provider"]
+    if provider == "focus":
+        names = {_cell(r, spec["provider_col"]).lower() for r in rows if _cell(r, spec["provider_col"])} if spec.get("provider_col") is not None else set()
+        provider = next(iter(names)) if len(names) == 1 else ("multi" if names else "focus")
+        provider = {"amazon web services": "aws", "microsoft": "azure", "google cloud": "gcp", "google": "gcp"}.get(provider, provider)
+        notes.append("Formato FOCUS: se usa BilledCost (lo facturado); EffectiveCost (amortizado) no se mezcla.")
+    elif spec["fmt"] in ("generic_billing", "mapped_billing"):
+        how = "indicadas por ti" if spec["fmt"] == "mapped_billing" else "reconocidas por sinónimo"
+        notes.append(f"Columnas {how}: fecha=«{header_names['date']}», costo=«{header_names['cost']}», servicio=«{header_names['service']}». "
+                     "Si no son las correctas, indícalas a mano.")
     if not currency:
-        currency = "USD" if spec["provider"] == "aws" else "?"
+        currency = "USD" if provider == "aws" else "?"
         notes.append("El archivo no declara la moneda" + (": se asumió USD (lo habitual en AWS)." if currency == "USD" else "."))
-    return CloudExport(spec["provider"], spec["fmt"], currency, out, notes)
+    return CloudExport(provider, spec["fmt"], currency, out, notes)
 
 
 def _parse_wide(header: list[str], rows: list[list[str]], cols: list[tuple[int, date | None, str, str]], filename: str) -> CloudExport:
@@ -429,6 +509,10 @@ def analyze_cloud(exp: CloudExport, filename: str) -> dict:
     order = {"alert": 0, "review": 1, "info": 2}
     findings.sort(key=lambda f: (order[f["severity"]], -Decimal(f["amount"] or 0), f["rule"], f["title"]))
     day_values = [r.day for r in rows if r.day]
+    day_totals: dict[date, Decimal] = defaultdict(lambda: ZERO)
+    for r in rows:
+        if r.day:
+            day_totals[r.day] += r.amount
     return {
         "filename": filename, "provider": exp.provider, "format": exp.fmt, "currency": cur, "rows": len(rows),
         "granularity": "daily" if daily else "monthly",
@@ -440,6 +524,7 @@ def analyze_cloud(exp: CloudExport, filename: str) -> dict:
         "by_region": _breakdown(rows, "region", total, periods, 15) if any(r.region != "—" for r in rows) else [],
         "by_account": _breakdown(rows, "account", total, periods, 15) if any(r.account != "—" for r in rows) else [],
         "by_group": _breakdown(rows, "group", total, periods, 15) if any(r.group != "—" for r in rows) else [],
+        "daily": [{"day": d.isoformat(), "amount": _q2(v)} for d, v in sorted(day_totals.items())[-MAX_DAILY_POINTS:]],
         "movers": movers, "anomalies": anomalies, "findings": findings, "notes": notes,
         "compared": [done[-2], done[-1]] if len(done) >= 2 else None,
     }

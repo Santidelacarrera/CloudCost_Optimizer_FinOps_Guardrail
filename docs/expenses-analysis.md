@@ -12,7 +12,7 @@ Genera `gastos-out\report.md` (el informe) y `gastos-out\result.json` (los datos
 |---|---|---|
 | **Gastos y presupuestos** (CSV o Excel) | gastos comunes, listados de costos, un Excel con «proveedor, concepto, importe» | si subtotales y totales cuadran, cobros repetidos, posibles pagos dobles, cobros atípicos, concentración, y con varios meses qué subió o apareció |
 | **Estados de pago de obra** | avance real vs proyectado | atraso, anticipo, proyección de término |
-| **Facturación de nube** | **AWS** CUR (CSV) y Cost Explorer (CSV de la consola, ancho); **Azure** Cost Management (CSV); **GCP** Billing export (CSV) | gasto por mes, servicio, región y cuenta; qué servicios subieron o aparecieron entre los dos últimos meses completos; picos diarios; créditos e impuestos |
+| **Facturación de nube** | **AWS** CUR y Cost Explorer (CSV de la consola, ancho); **Azure** Cost Management; **GCP** Billing export; **FOCUS** (el formato estándar de la FinOps Foundation: AWS, Azure, GCP u OCI exportados en FOCUS); y **cualquier tabla** con fecha + costo + servicio | gasto por mes, servicio, región y cuenta; qué servicios subieron o aparecieron entre los dos últimos meses completos; picos diarios; créditos e impuestos |
 
 Los **Excel (.xlsx)** se leen directamente (cada hoja con datos cuenta como un archivo). Se leen solo valores: las fórmulas se usan por su último resultado guardado y nunca se evalúan.
 
@@ -28,10 +28,27 @@ Los **Excel (.xlsx)** se leen directamente (cada hoja con datos cuenta como un a
 - **Picos diarios** (solo con datos diarios): un día con ≥ 2,5× la mediana de los 14 días anteriores de ese servicio y ≥ 1 % del gasto total.
 - **Créditos** e **impuestos** se informan aparte: el gasto neto puede ser menor que el gasto real mientras haya créditos.
 
+## Si tu archivo tiene otras columnas
+1. **Sinónimos automáticos:** cabeceras como `Fecha / Servicio / Costo / Moneda` se reconocen solas **si los servicios parecen de nube** (Amazon S3, Virtual Machines, BigQuery…). Así una lista de edificio con «Fecha / Servicio / Costo» no se toma por una factura.
+2. **Indicarlas a mano:** en la pantalla, «Mi factura de nube tiene otras columnas»; en la terminal, `--columns date=Día cost="Monto USD" service=Item`. Fecha, costo y servicio son obligatorios; región, cuenta, grupo, moneda y tipo de cargo son opcionales. El informe dice qué columnas usó.
+3. Si nada de eso sirve, pásame solo las **cabeceras** (sin datos) y se añade el formato.
+
 ## Lo que NO hace
 - **No ve recursos individuales.** Una factura dice «EC2 subió 54 %», no «esta instancia está ociosa» ni cuánto se ahorraría. Para recomendaciones con ahorro estimado hay que conectar la cuenta o [importar el inventario](supported-services.md) (CSV o Excel, EC2/EBS/snapshots).
-- No interpreta un export con otro formato de columnas (si no lo reconoce, lo trata como estado de gastos genérico y puede fallar con un mensaje).
+- Con cabeceras que no se reconocen y sin mapeo manual, el archivo se trata como estado de gastos genérico y puede fallar con un mensaje.
 - Los hallazgos son **pistas para revisar**, no conclusiones.
 
 ## Nivel de verificación
 Probado con archivos ficticios con la forma documentada de cada proveedor (pruebas `test_expenses_cloud.py` y `test_expenses_api.py`). **No se ha probado con exportaciones reales** de AWS, Azure o GCP: los nombres de columna salen de la documentación de cada proveedor y pueden variar según la versión de la exportación. Si un export real no se reconoce, pásalo (anonimizado) para añadir su formato.
+
+## Importar inventario desde archivo: qué servicios admite
+Además del análisis de gasto, **Importar CSV/Excel** (`/imports`, plantilla completa en `/imports/template?full=true`) crea recomendaciones con ahorro estimado para **11 servicios**, todos los que tienen una regla de recomendación:
+
+| Proveedor | Servicios | Reglas que se aplican |
+|---|---|---|
+| AWS | `ec2`, `ebs`, `ebs_snapshot`, `rds` | ociosa / reducir tamaño, volumen sin adjuntar, snapshot antiguo, base de datos abandonada |
+| Azure | `vm`, `disk`, `disk_snapshot` | las mismas (el coste debe ir en el archivo para `vm`) |
+| GCP | `gce`, `pd`, `pd_snapshot` | las mismas (el coste debe ir en el archivo para `gce`) |
+| Kubernetes | `k8s_workload` | requests sobredimensionados (CPU `500m` o `0.5`; memoria `512Mi` o bytes) |
+
+Los servicios **sin regla** (S3, Lambda, DynamoDB, etc.) no se pueden importar como inventario: no generarían nunca una recomendación. Añadirlos exige primero escribir su regla, no solo aceptar el formato. Además, la reducción de tamaño de VM de Azure/GCP solo se propone si el tipo de máquina está en la tabla de precios (hoy, nombres de AWS): para otros tipos el archivo sí se importa, pero no habrá propuesta de cambio de tamaño.

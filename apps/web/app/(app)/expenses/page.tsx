@@ -2,6 +2,7 @@
 import { Fragment, useState } from "react";
 import { api, clp, money, moneyIn, pct1 } from "@/lib/api";
 import PageHead from "@/components/PageHead";
+import { DailyLine, MonthBars, MoversBars, ShareBar, Spark } from "@/components/SpendCharts";
 
 type Finding = { rule: string; severity: "alert" | "review" | "info"; title: string; detail: string; amount: string | null; statement: string | null };
 type Item = { label: string; amount: string; share: string; note?: string | null; doc?: string | null; date?: string | null; group?: string | null };
@@ -25,6 +26,7 @@ type Cloud = {
   first_day: string | null; last_day: string | null; total: string; credits: string; tax: string;
   months: { period: string; total: string; complete: boolean }[];
   by_service: Breakdown[]; by_region: Breakdown[]; by_account: Breakdown[]; by_group: Breakdown[];
+  daily: { day: string; amount: string }[];
   movers: { name: string; previous: string; current: string; delta: string; pct: string | null }[];
   anomalies: { name: string; day: string; amount: string; baseline: string; excess: string }[];
   findings: Finding[]; notes: string[]; compared: string[] | null;
@@ -62,11 +64,119 @@ async function readBase64(f: File): Promise<string> {
   return btoa(bin);
 }
 
+function CloudSection({ c }: { c: Cloud }) {
+  const done = c.months.filter((m) => m.complete);
+  const last = done[done.length - 1], prev = done[done.length - 2];
+  const change = last && prev && Number(prev.total) > 0 ? (Number(last.total) - Number(prev.total)) / Number(prev.total) : null;
+  const top = c.by_service[0];
+  const sections = ([["Por servicio", c.by_service], ["Por región", c.by_region], ["Por cuenta / suscripción / proyecto", c.by_account], ["Por grupo de recursos", c.by_group]] as [string, Breakdown[]][])
+    .filter(([, rows]) => rows.length > 0);
+  const sev: Record<Finding["severity"], string> = { alert: "sp-n-alert", review: "sp-n-review", info: "sp-n-info" };
+  return (
+    <section className="sp-cloud" aria-label={`Análisis de nube de ${c.filename}`}>
+      <h2>Nube · {c.filename}</h2>
+      <p className="sp-meta">
+        <span>{c.provider === "other" ? "Facturación" : c.provider.toUpperCase()}</span><span>{c.rows.toLocaleString("es-CL")} filas</span>
+        <span>{c.granularity === "daily" ? "diario" : "mensual"}</span><span>{c.first_day} → {c.last_day}</span><span>moneda {c.currency}</span>
+        {Number(c.credits) !== 0 && <span>créditos {moneyIn(c.credits, c.currency)}</span>}
+        {Number(c.tax) !== 0 && <span>impuestos {moneyIn(c.tax, c.currency)}</span>}
+      </p>
+
+      <div className="totals">
+        <div className="total"><div className="v">{moneyIn(c.total, c.currency)}</div><div className="l">gasto neto del archivo</div></div>
+        <div className="total">
+          <div className="v">{last ? moneyIn(last.total, c.currency) : "—"}</div>
+          <div className="l">último mes completo{last ? ` (${last.period})` : ""}
+            {change !== null && <span className={`sp-pill ${change > 0 ? "sp-up-t" : "sp-down-t"}`}>{change > 0 ? "▲ +" : "▼ −"}{Math.abs(change * 100).toFixed(1).replace(".", ",")} %</span>}</div>
+        </div>
+        <div className="total"><div className="v sp-small">{top ? top.name : "—"}</div><div className="l">{top ? `es el ${pct1(top.share)} del gasto` : "servicio que más pesa"}</div></div>
+        <div className="total"><div className="v"><span className="mark">{c.findings.length}</span></div><div className="l">hallazgos para revisar</div></div>
+      </div>
+
+      <div className="card sp-card">
+        <h3>Gasto por mes</h3>
+        <p className="muted sp-sub">Solo se comparan meses completos; un mes cortado no se toma como una bajada.</p>
+        <MonthBars months={c.months} compared={c.compared} currency={c.currency} />
+      </div>
+
+      {c.daily.length > 1 && (
+        <div className="card sp-card">
+          <h3>Gasto diario</h3>
+          <p className="muted sp-sub">{c.anomalies.length > 0 ? "Los puntos rojos son días que costaron mucho más que la mediana de los días anteriores del mismo servicio." : "Sin picos diarios fuera de lo normal."}</p>
+          <DailyLine daily={c.daily} spikes={c.anomalies} months={c.months} currency={c.currency} />
+        </div>
+      )}
+
+      {(c.movers.length > 0 || c.by_service.length > 0) && (
+        <div className="sp-two">
+          {c.movers.length > 0 && (
+            <div className="card sp-card">
+              <h3>Qué cambió</h3>
+              <p className="muted sp-sub">{c.compared?.[0]} → {c.compared?.[1]}, por servicio.</p>
+              <MoversBars movers={c.movers} currency={c.currency} />
+            </div>
+          )}
+          {c.by_service.length > 0 && (
+            <div className="card sp-card">
+              <h3>Dónde está el gasto</h3>
+              <p className="muted sp-sub">Reparto del total por servicio.</p>
+              <ShareBar parts={c.by_service} currency={c.currency} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {c.findings.length > 0 && (
+        <div className="card sp-card">
+          <h3>Qué revisar</h3>
+          <ul className="sp-notes">
+            {c.findings.map((f, k) => (
+              <li key={k} className={sev[f.severity]}>
+                <span className={`badge ${SEV[f.severity].cls}`}>{SEV[f.severity].label}</span>
+                <div><b>{f.title}</b>{f.statement && <span className="muted"> · {f.statement}</span>}<p>{f.detail}</p></div>
+                <span className="sp-amt">{f.amount ? moneyIn(f.amount, c.currency) : ""}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <details className="card sp-card sp-details">
+        <summary>Ver las tablas con todos los datos</summary>
+        <h3>Gasto por mes</h3>
+        <table>
+          <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Gasto</th><th>Estado</th></tr></thead>
+          <tbody>{c.months.map((m) => (
+            <tr key={m.period}><td>{m.period}</td><td style={{ textAlign: "right" }}>{moneyIn(m.total, c.currency)}</td><td className={m.complete ? "muted" : "err"}>{m.complete ? "completo" : "incompleto (no se compara)"}</td></tr>
+          ))}</tbody>
+        </table>
+        {sections.map(([title, rows]) => (
+          <div key={title}>
+            <h3>{title}</h3>
+            <table>
+              <thead><tr><th>Nombre</th><th>Tendencia</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>% del total</th></tr></thead>
+              <tbody>{rows.map((r) => (
+                <tr key={r.name}><td>{r.name}</td><td><Spark values={c.months.filter((m) => m.complete && r.months[m.period] !== undefined).map((m) => Number(r.months[m.period]))} /></td>
+                  <td style={{ textAlign: "right" }}>{moneyIn(r.total, c.currency)}</td><td style={{ textAlign: "right" }} className="muted">{pct1(r.share)}</td></tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ))}
+      </details>
+      {c.notes.map((n, k) => <p key={k} className="muted sp-note">⚠ {n}</p>)}
+      <p className="muted sp-note">Esto es análisis de factura: dice dónde y cuándo cambió el gasto, no qué recurso lo causa ni cuánto se puede ahorrar. Para eso hay que conectar la cuenta o importar el inventario.</p>
+    </section>
+  );
+}
+
 export default function ExpensesPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [res, setRes] = useState<Result | null>(null);
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cols, setCols] = useState<Record<string, string>>({});
+
+  const ownFindings = res ? res.total_findings - res.cloud.reduce((a, c) => a + c.findings.length, 0) : 0;
 
   const submit = async () => {
     if (!files.length) return;
@@ -74,7 +184,10 @@ export default function ExpensesPage() {
     try {
       const payload = await Promise.all(files.map(async (f) => (
         isExcel(f) ? { filename: f.name, xlsx_base64: await readBase64(f) } : { filename: f.name, csv_text: await readText(f) })));
-      setRes(await api<Result>("expenses/analyze", { method: "POST", body: { files: payload } }));
+      const mapped = cols.date?.trim() && cols.cost?.trim() && cols.service?.trim()
+        ? Object.fromEntries(Object.entries(cols).filter(([, v]) => v.trim()).map(([k, v]) => [k, v.trim()])) : undefined;
+      if (Object.values(cols).some((v) => v.trim()) && !mapped) throw new Error("Para indicar tus columnas, rellena al menos fecha, costo y servicio.");
+      setRes(await api<Result>("expenses/analyze", { method: "POST", body: { files: payload, columns: mapped } }));
     } catch (e: any) { setMsg(e.message); } finally { setBusy(false); }
   };
 
@@ -83,15 +196,24 @@ export default function ExpensesPage() {
       <PageHead title="Analizar gastos" sub="Sube un CSV o Excel y recibe una revisión automática: si las cifras cuadran, cobros repetidos, gastos atípicos, avance de obra y gasto de nube." />
       <div className="card">
         <p>Sube un CSV o un Excel (.xlsx) y obtén una revisión automática. Reconoce <b>gastos comunes y presupuestos</b> (tablas planas o informes con secciones, subtotales y detalle por documento:
-          si las cifras cuadran, cobros repetidos, posibles pagos dobles, cobros atípicos, dónde se concentra el gasto y, con varios meses, qué subió o apareció)
-          <b>estados de pago de obra</b> (avance real vs proyectado, anticipo, atraso y proyección de término) y
-          <b> exportaciones de facturación de nube</b> (AWS CUR o Cost Explorer, Azure Cost Management, GCP Billing: gasto por servicio, región y mes, qué creció, servicios nuevos y picos diarios).</p>
+          si las cifras cuadran, cobros repetidos, posibles pagos dobles, cobros atípicos, dónde se concentra el gasto y, con varios meses, qué subió o apareció),{" "}
+          <b>estados de pago de obra</b> (avance real vs proyectado, anticipo, atraso y proyección de término) y{" "}
+          <b>exportaciones de facturación de nube</b> (AWS CUR o Cost Explorer, Azure Cost Management, GCP Billing: gasto por servicio, región y mes, qué creció, servicios nuevos y picos diarios).</p>
         <p className="muted">Los archivos .xls antiguos y los libros con macros no se aceptan: guárdalos como .xlsx o CSV.
           Puedes subir varios meses a la vez para compararlos. El contenido <b>no se guarda</b>: se analiza en memoria y en la auditoría solo quedan cifras agregadas.
           Los hallazgos son pistas para revisar, no conclusiones: que un gasto sobre o no depende de contexto que el archivo no trae.</p>
         <div className="grid" style={{ gridTemplateColumns: "1fr", maxWidth: 520 }}>
           <input type="file" multiple accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Archivos CSV o Excel de gastos"
                  onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
+          <details className="sp-cols">
+            <summary>Mi factura de nube tiene otras columnas</summary>
+            <p className="muted" style={{ fontSize: 13, margin: "8px 0 0" }}>Escribe el nombre exacto de cada columna de tu archivo. Se aplica a todos los archivos de esta subida. Fecha, costo y servicio son obligatorios.</p>
+            <div className="sp-cols-grid">
+              {([["date", "Fecha"], ["cost", "Costo"], ["service", "Servicio o producto"], ["region", "Región (opcional)"], ["account", "Cuenta (opcional)"], ["currency", "Moneda (opcional)"]] as [string, string][]).map(([k, l]) => (
+                <label key={k}>{l}<input value={cols[k] ?? ""} onChange={(e) => setCols({ ...cols, [k]: e.target.value })} autoComplete="off" /></label>
+              ))}
+            </div>
+          </details>
           <button onClick={submit} disabled={!files.length || busy}>{busy ? "Analizando…" : `Analizar ${files.length > 1 ? `${files.length} archivos` : "archivo"}`}</button>
         </div>
         {msg && <p className="note bad" role="alert" style={{ marginTop: 14 }}>{msg}</p>}
@@ -99,17 +221,11 @@ export default function ExpensesPage() {
 
       {res && (
         <>
-          <div className="totals">
+          {(res.statements.length > 0 || res.projects.length > 0) && <div className="totals">
             {res.projects.map((p, i) => (
               <div className="total" key={`p${i}`}>
                 <div className="v">{money(p.summary.contract, p.summary.currency)}</div>
                 <div className="l">contrato de obra · {p.filename}</div>
-              </div>
-            ))}
-            {res.cloud.map((c, i) => (
-              <div className="total" key={`c${i}`}>
-                <div className="v">{moneyIn(c.total, c.currency)}</div>
-                <div className="l">gasto de nube neto · {c.filename}</div>
               </div>
             ))}
             {res.statements.map((s, i) => (
@@ -122,10 +238,10 @@ export default function ExpensesPage() {
               <div className={`v ${res.checks.failed ? "err" : ""}`}>{res.checks.passed} / {res.checks.passed + res.checks.failed}</div>
               <div className="l">subtotales y totales que cuadran</div>
             </div>
-            <div className="total"><div className="v"><span className="mark">{res.total_findings}</span></div><div className="l">hallazgos para revisar</div></div>
-          </div>
+            <div className="total"><div className="v"><span className="mark">{ownFindings}</span></div><div className="l">hallazgos para revisar</div></div>
+          </div>}
 
-          <h2>Hallazgos</h2>
+          {(res.statements.length > 0 || res.projects.length > 0) && <><h2>Hallazgos</h2>
           <div className="card">
             {res.findings.length === 0 && <p className="muted">No se encontró nada que revisar con las reglas actuales.</p>}
             <table>
@@ -139,8 +255,8 @@ export default function ExpensesPage() {
                 ))}
               </tbody>
             </table>
-            {res.total_findings > res.findings.length && <p className="muted">Se muestran los {res.findings.length} más relevantes de {res.total_findings}.</p>}
-          </div>
+            {ownFindings > res.findings.length && <p className="muted">Se muestran los {res.findings.length} más relevantes de {ownFindings}.</p>}
+          </div></>}
 
           {res.comparison && (
             <>
@@ -200,74 +316,7 @@ export default function ExpensesPage() {
             );
           })}
 
-          {res.cloud.map((c, i) => (
-            <div key={`cloud${i}`}>
-              <h2>Nube · {c.filename}</h2>
-              <div className="card" style={{ overflowX: "auto" }}>
-                <p className="muted">{c.provider.toUpperCase()} · {c.rows} filas · {c.granularity === "daily" ? "diario" : "mensual"} · {c.first_day} → {c.last_day} · moneda {c.currency}
-                  {Number(c.credits) !== 0 ? ` · créditos/reembolsos ${moneyIn(c.credits, c.currency)}` : ""}
-                  {Number(c.tax) !== 0 ? ` · impuestos ${moneyIn(c.tax, c.currency)}` : ""}</p>
-                {c.findings.length > 0 && (
-                  <table>
-                    <tbody>
-                      {c.findings.map((f, k) => (
-                        <tr key={k}>
-                          <td style={{ width: 120 }}><span className={`badge ${SEV[f.severity].cls}`}>{SEV[f.severity].label}</span></td>
-                          <td><b>{f.title}</b>{f.statement && <span className="muted"> · {f.statement}</span>}<br /><span className="muted">{f.detail}</span></td>
-                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{f.amount ? moneyIn(f.amount, c.currency) : null}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-                <h3>Gasto por mes</h3>
-                <table>
-                  <thead><tr><th>Mes</th><th style={{ textAlign: "right" }}>Gasto</th><th>Estado</th></tr></thead>
-                  <tbody>{c.months.map((m) => (
-                    <tr key={m.period}><td>{m.period}</td><td style={{ textAlign: "right" }}>{moneyIn(m.total, c.currency)}</td><td className={m.complete ? "muted" : "err"}>{m.complete ? "completo" : "incompleto (no se compara)"}</td></tr>
-                  ))}</tbody>
-                </table>
-                {c.movers.length > 0 && (
-                  <>
-                    <h3>Qué cambió ({c.compared?.[0]} → {c.compared?.[1]})</h3>
-                    <table>
-                      <thead><tr><th>Servicio</th><th style={{ textAlign: "right" }}>Antes</th><th style={{ textAlign: "right" }}>Ahora</th><th style={{ textAlign: "right" }}>Variación</th><th style={{ textAlign: "right" }}>%</th></tr></thead>
-                      <tbody>{c.movers.map((m) => (
-                        <tr key={m.name}><td>{m.name}</td><td style={{ textAlign: "right" }}>{moneyIn(m.previous, c.currency)}</td><td style={{ textAlign: "right" }}>{moneyIn(m.current, c.currency)}</td>
-                          <td style={{ textAlign: "right" }} className={Number(m.delta) > 0 ? "err" : "muted"}>{moneyIn(m.delta, c.currency)}</td>
-                          <td style={{ textAlign: "right" }} className="muted">{m.pct === null ? "nuevo" : pct1(m.pct)}</td></tr>
-                      ))}</tbody>
-                    </table>
-                  </>
-                )}
-                {c.anomalies.length > 0 && (
-                  <>
-                    <h3>Picos diarios</h3>
-                    <table>
-                      <thead><tr><th>Servicio</th><th>Día</th><th style={{ textAlign: "right" }}>Costo</th><th style={{ textAlign: "right" }}>Mediana previa</th></tr></thead>
-                      <tbody>{c.anomalies.map((a) => (
-                        <tr key={`${a.name}-${a.day}`}><td>{a.name}</td><td>{a.day}</td><td style={{ textAlign: "right" }}>{moneyIn(a.amount, c.currency)}</td><td style={{ textAlign: "right" }} className="muted">{moneyIn(a.baseline, c.currency)}</td></tr>
-                      ))}</tbody>
-                    </table>
-                  </>
-                )}
-                {([["Por servicio", c.by_service], ["Por región", c.by_region], ["Por cuenta / suscripción / proyecto", c.by_account], ["Por grupo de recursos", c.by_group]] as [string, Breakdown[]][])
-                  .filter(([, rows]) => rows.length > 0).map(([title, rows]) => (
-                    <div key={title}>
-                      <h3>{title}</h3>
-                      <table>
-                        <thead><tr><th>Nombre</th><th style={{ textAlign: "right" }}>Total</th><th style={{ textAlign: "right" }}>% del total</th></tr></thead>
-                        <tbody>{rows.map((r) => (
-                          <tr key={r.name}><td>{r.name}</td><td style={{ textAlign: "right" }}>{moneyIn(r.total, c.currency)}</td><td style={{ textAlign: "right" }} className="muted">{pct1(r.share)}</td></tr>
-                        ))}</tbody>
-                      </table>
-                    </div>
-                  ))}
-                {c.notes.map((n, k) => <p key={k} className="muted">⚠ {n}</p>)}
-                <p className="muted">Esto es análisis de factura: dice dónde y cuándo cambió el gasto, no qué recurso lo causa ni cuánto se puede ahorrar. Para eso hay que conectar la cuenta o importar el inventario.</p>
-              </div>
-            </div>
-          ))}
+          {res.cloud.map((c, i) => <CloudSection key={`cloud${i}`} c={c} />)}
 
           {res.statements.map((s, i) => (
             <div key={i}>

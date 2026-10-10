@@ -17,8 +17,10 @@ _ORDER = {"alert": 0, "review": 1, "info": 2}
 _MAX_FINDINGS = 100
 
 
-def analyze_documents(files: list[tuple[str, str]]) -> tuple[dict, dict]:
-    """files = [(nombre, texto_csv)]. Devuelve (resultado, errores_por_archivo). Si hay errores no hay resultado útil."""
+def analyze_documents(files: list[tuple[str, str]], columns: dict[str, str] | None = None) -> tuple[dict, dict]:
+    """files = [(nombre, texto_csv)]. Devuelve (resultado, errores_por_archivo). Si hay errores no hay resultado útil.
+
+    `columns` ({campo: nombre de columna}) fuerza la lectura de TODOS los archivos como tablas de facturación de nube con esas columnas."""
     statements: list[Statement] = []
     projects: list[dict] = []
     clouds: list[dict] = []
@@ -26,7 +28,7 @@ def analyze_documents(files: list[tuple[str, str]]) -> tuple[dict, dict]:
     for name, text in files:
         try:
             rows = read_rows(text, max_rows=CLOUD_MAX_ROWS)
-            if (exp := detect_cloud(rows, name)) is not None:
+            if (exp := detect_cloud(rows, name, columns)) is not None:
                 clouds.append(analyze_cloud(exp, name))
                 continue
             if len(rows) > MAX_ROWS + 200:

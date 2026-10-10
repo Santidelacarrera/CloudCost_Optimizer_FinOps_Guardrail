@@ -82,6 +82,10 @@ def expenses(args: argparse.Namespace) -> int:
     from .expenses.xlsx import xlsx_to_csv_texts
 
     docs: list[tuple[str, str]] = []
+    columns = {}
+    for pair in args.columns or []:
+        key, _, value = pair.partition("=")
+        columns[key.strip()] = value.strip()
     try:
         for path in args.files:
             name = os.path.basename(path)
@@ -97,7 +101,7 @@ def expenses(args: argparse.Namespace) -> int:
     except (OSError, ExpenseFormatError) as exc:
         print(f"No se pudo leer el archivo: {exc}", file=sys.stderr)
         return 2
-    result, err = analyze_documents(docs)
+    result, err = analyze_documents(docs, columns)
     if err:
         for line in err["errors"]:
             print(line, file=sys.stderr)
@@ -146,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     k_p.set_defaults(func=k8s_lab)
     e_p = sub.add_parser("expenses", help="Analiza gastos desde CSV o Excel (.xlsx), incluidas exportaciones de facturación de AWS/Azure/GCP")
     e_p.add_argument("files", nargs="+", help="Uno o varios archivos (varios meses se comparan entre sí)")
+    e_p.add_argument("--columns", nargs="+", metavar="CAMPO=COLUMNA",
+                     help="Para facturas de nube con otras cabeceras: date=Fecha cost=Importe service=Producto [region=… account=… currency=…]")
     e_p.add_argument("--out-dir", default="gastos-out")
     e_p.set_defaults(func=expenses)
     args = parser.parse_args(argv)

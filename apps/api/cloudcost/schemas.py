@@ -184,6 +184,25 @@ class ExpenseFileIn(BaseModel):
 
 class ExpenseAnalyzeIn(BaseModel):
     files: list[ExpenseFileIn] = Field(min_length=1, max_length=12)
+    # Columnas elegidas a mano para facturas de nube con cabeceras propias: {date, cost, service, region, account, group, currency, kind} -> nombre de columna
+    columns: dict[str, str] | None = None
+
+    @field_validator("columns")
+    @classmethod
+    def _columns(cls, v):
+        if v is None:
+            return v
+        allowed = {"date", "cost", "service", "region", "account", "group", "currency", "kind"}
+        v = {k: x.strip() for k, x in v.items() if x and x.strip()}
+        if not v:
+            return None
+        if set(v) - allowed:
+            raise ValueError(f"campos admitidos: {sorted(allowed)}")
+        if not {"date", "cost", "service"} <= set(v):
+            raise ValueError("indica al menos las columnas date, cost y service")
+        if any(len(x) > 80 for x in v.values()):
+            raise ValueError("nombre de columna demasiado largo")
+        return v
 
 
 # ---------------------------------------------------------------- cuentas propias

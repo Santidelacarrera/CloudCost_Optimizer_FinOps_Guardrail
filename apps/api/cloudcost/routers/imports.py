@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
 from psycopg.types.json import Jsonb
 
-from ..collectors.file_import import MAX_ROWS, TEMPLATE_CSV, parse_csv
+from ..collectors.file_import import MAX_ROWS, TEMPLATE_CSV, TEMPLATE_FULL_CSV, parse_csv
 from ..db import tenant_tx
 from ..expenses.parser import ExpenseFormatError
 from ..expenses.xlsx import xlsx_to_csv_texts
@@ -22,8 +22,9 @@ log = logging.getLogger(__name__)
 
 
 @router.get("/imports/template", response_class=PlainTextResponse)
-def template(_: Principal = Depends(require(*READ))):
-    return PlainTextResponse(TEMPLATE_CSV, media_type="text/csv")
+def template(full: bool = False, _: Principal = Depends(require(*READ))):
+    """`?full=true` incluye ejemplos de RDS, Azure, GCP y Kubernetes además de EC2/EBS/snapshots."""
+    return PlainTextResponse(TEMPLATE_FULL_CSV if full else TEMPLATE_CSV, media_type="text/csv")
 
 
 @router.post("/imports", status_code=202)

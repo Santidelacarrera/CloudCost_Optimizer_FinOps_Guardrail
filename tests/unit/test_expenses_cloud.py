@@ -33,6 +33,8 @@ def test_aws_cur_summary_compares_only_complete_months_and_flags_growth_and_new_
     assert "CLOUD_CREDITS" in by_rule and Decimal(c["credits"]) == Decimal("-30.00")
     assert any("incompleto" in n for n in c["notes"])
     assert c["by_service"][0]["name"] == "Amazon Elastic Compute Cloud" and r["total_findings"] == len(c["findings"])
+    assert len(c["daily"]) == 73 and c["daily"][0] == {"day": "2026-08-01", "amount": "120.00"}               # serie diaria para el gráfico
+    assert sum(Decimal(d["amount"]) for d in c["daily"]) == Decimal(c["total"])
 
 
 def test_totals_are_exact_and_shares_sum_to_one():
@@ -164,3 +166,46 @@ def test_schema_requires_exactly_one_source():
     for kw in ({}, {"csv_text": "a;b\n1;2", "xlsx_base64": "UEsDBA=="}):
         with pytest.raises(ValidationError):
             ExpenseFileIn(filename="a.csv", **kw)
+
+
+# ------------------------------------------------------------------------------------------------ otros formatos de columnas
+def _two_months(rows_fn) -> str:
+    return "\n".join(rows_fn(d) for d in daterange(date(2026, 3, 1), date(2026, 4, 30)))
+
+
+def test_focus_export_is_recognised_and_uses_billed_cost():
+    header = "BilledCost,EffectiveCost,BillingCurrency,ChargePeriodStart,ChargeCategory,ProviderName,ServiceName,RegionName,SubAccountId"
+    body = _two_months(lambda d: f"{10 if d.month == 3 else 30},999,USD,{d.isoformat()}T00:00:00Z,Usage,Amazon Web Services,Amazon EC2,us-east-1,acct-1")
+    (c,) = run(header + "\n" + body + "\n", "focus.csv")["cloud"]
+    assert (c["format"], c["provider"], c["currency"]) == ("focus", "aws", "USD")
+    assert Decimal(c["total"]) == Decimal(31 * 10 + 30 * 30)                                  # BilledCost, no EffectiveCost
+    assert c["by_account"][0]["name"] == "acct-1" and any("FOCUS" in n for n in c["notes"])
+    assert any(f["rule"] == "CLOUD_SPEND_GROWTH" for f in c["findings"])
+
+
+def test_spanish_synonym_headers_are_accepted_only_when_services_look_like_cloud():
+    cloud = "Fecha;Servicio;Costo;Moneda\n" + _two_months(lambda d: f"{d.isoformat()};Amazon S3;{5 if d.month == 3 else 12};USD")
+    (c,) = run(cloud, "factura.csv")["cloud"]
+    assert (c["format"], c["currency"]) == ("generic_billing", "USD") and any("sinónimo" in n for n in c["notes"])
+    building = "Fecha;Servicio;Costo\n2026-03-05;Aseo;100000\n2026-03-06;Seguridad;200000\n2026-03-07;Jardinería;50000\n"
+    result = run(building, "edificio.csv")
+    assert result["cloud"] == [] and result["statements"][0]["item_count"] == 3          # no se confunde con una factura de nube
+
+
+def test_explicit_column_mapping_handles_any_headers_and_reports_missing_ones():
+    text = "Día;Item;Monto USD\n" + _two_months(lambda d: f"{d.isoformat()};Cómputo;{4 if d.month == 3 else 9}")
+    result, err = analyze_documents([("raro.csv", text)], {"date": "Día", "cost": "Monto USD", "service": "Item"})
+    assert not err and result["cloud"][0]["format"] == "mapped_billing" and result["cloud"][0]["by_service"][0]["name"] == "Cómputo"
+    _, err = analyze_documents([("raro.csv", text)], {"date": "Día", "cost": "NoExiste", "service": "Item"})
+    assert err and ("No se encontró" in err["errors"][0] or "NoExiste" in err["errors"][0])
+
+
+def test_schema_validates_column_mapping():
+    from cloudcost.schemas import ExpenseAnalyzeIn
+    from pydantic import ValidationError
+
+    ok = ExpenseAnalyzeIn(files=[{"filename": "a.csv", "csv_text": "a;b\n1;2"}], columns={"date": "Día", "cost": "Monto", "service": "Item", "region": ""})
+    assert ok.columns == {"date": "Día", "cost": "Monto", "service": "Item"}
+    for bad in ({"date": "Día"}, {"date": "a", "cost": "b", "service": "c", "evil": "x"}):
+        with pytest.raises(ValidationError):
+            ExpenseAnalyzeIn(files=[{"filename": "a.csv", "csv_text": "a;b\n1;2"}], columns=bad)
