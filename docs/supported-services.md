@@ -55,7 +55,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 |---|---|---|---|
 | Azure | VM, discos administrados, snapshots (REST); métricas de Azure Monitor | L1 | Coste = tabla de precios (sin coste real). Sin pruebas contra una suscripción real |
 | GCP | Compute Engine, discos persistentes, snapshots; Cloud Monitoring | L1 | Coste = tabla de precios. Sin pruebas contra un proyecto real |
-| Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L1 | No habla con la API de Kubernetes. Sin pruebas contra un clúster real |
+| Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L1 | No habla con la API de Kubernetes. Herramienta para validarlo en un clúster real local: `python scripts/k8s_lab.py` ([guía](k8s-lab-validation.md)); **todavía sin ejecutar** |
 | CSV importado | EC2, EBS, snapshots con uso y coste (≤ 5 000 filas / 2 MB) | L1 | Coste del archivo tratado como verificado |
 | Demostración | 21 recursos sintéticos de AWS | — | Solo con `DEMO_ENABLED=true` (prohibido en producción) |
 
@@ -72,7 +72,7 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 
 1. **AWS L2 → L3**: ejecutar `python scripts/aws_lab.py` contra una cuenta de laboratorio y adjuntar `report.md`/`snapshot.json`.
 2. **RDS**: inventario real (`DescribeDBInstances` + `AWS/RDS` en CloudWatch). Hoy no existe.
-3. **Azure/GCP/Kubernetes**: cuentas y clústeres de laboratorio, como en AWS.
+3. **Kubernetes L1 → L3**: ejecutar `python scripts/k8s_lab.py` contra minikube ([k8s-lab-validation.md](k8s-lab-validation.md)); gratis y sin cuenta. **Azure/GCP**: cuentas de laboratorio, como en AWS.
 4. **Cuentas múltiples**: descubrimiento de cuentas vinculadas y un rol por cuenta.
 
 Hasta entonces, esta página y el README dicen lo mismo: lo no validado contra un sistema real se presenta como no validado.

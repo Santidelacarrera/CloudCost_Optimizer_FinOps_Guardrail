@@ -52,6 +52,26 @@ def aws_lab(args: argparse.Namespace) -> int:
     return 0 if not snap["meta"]["aborted"] else 1
 
 
+def k8s_lab(args: argparse.Namespace) -> int:
+    """Valida el colector de Kubernetes contra un clúster de laboratorio (minikube) y genera un informe reproducible. No usa la base de datos."""
+    from . import k8s_lab as lab
+
+    if args.from_snapshot:
+        snap = lab.load_snapshot(args.from_snapshot)
+    else:
+        snap = lab.collect_snapshot(cluster_ref=args.cluster_ref, prometheus_url=args.prometheus_url,
+                                    namespaces=[n.strip() for n in args.namespaces.split(",") if n.strip()],
+                                    min_observation_days=args.min_observation_days, cpu_hour=args.cpu_hour, mem_gib_hour=args.mem_gib_hour)
+    paths = lab.write(snap, args.out_dir)
+    for kind, path in paths.items():
+        print(f"{kind}: {path}")
+    print(f"huella de la instantánea: {lab.snapshot_digest(snap)}")
+    failed = [c for c in snap.get("checks", []) if c["result"] != "OK"]
+    for c in failed:
+        print(f"comprobación fallida: {c['workload']} — {c['expected']} (ocurrió: {c['observed']})", file=sys.stderr)
+    return 0 if not snap["meta"]["aborted"] and not failed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m cloudcost.cli", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -74,6 +94,16 @@ def main(argv: list[str] | None = None) -> int:
     lab_p.add_argument("--out-dir", default="lab-out")
     lab_p.add_argument("--from-snapshot", help="Regenera el informe a partir de una instantánea (sin acceso a AWS)")
     lab_p.set_defaults(func=aws_lab)
+    k_p = sub.add_parser("k8s-lab", help="Valida el colector de Kubernetes contra un clúster de laboratorio (minikube) y genera un informe reproducible")
+    k_p.add_argument("--cluster-ref", default="minikube", help="Nombre del clúster en los informes")
+    k_p.add_argument("--prometheus-url", default="http://localhost:9090", help="Prometheus del clúster (con kubectl port-forward)")
+    k_p.add_argument("--namespaces", default="lab-dev", help="Namespaces a evaluar, separados por comas")
+    k_p.add_argument("--min-observation-days", type=int, help="Reduce el umbral de días de datos (solo laboratorio; el producto usa 7)")
+    k_p.add_argument("--cpu-hour", type=float, help="USD por núcleo-hora para valorar lo reservado")
+    k_p.add_argument("--mem-gib-hour", type=float, help="USD por GiB-hora para valorar lo reservado")
+    k_p.add_argument("--out-dir", default="k8s-lab-out")
+    k_p.add_argument("--from-snapshot", help="Regenera el informe a partir de una instantánea (sin acceso al clúster)")
+    k_p.set_defaults(func=k8s_lab)
     args = parser.parse_args(argv)
     return args.func(args)
 

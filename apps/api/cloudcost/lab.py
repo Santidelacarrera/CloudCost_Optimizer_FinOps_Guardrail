@@ -392,9 +392,9 @@ def _cost_tables(a, snap: dict[str, Any]) -> None:
     a("")
 
 
-def write_outputs(snap: dict[str, Any], out_dir: str) -> dict[str, str]:
+def write_outputs(snap: dict[str, Any], out_dir: str, render=None) -> dict[str, str]:
     os.makedirs(out_dir, exist_ok=True)
-    report = render_report(snap)
+    report = (render or render_report)(snap)
     paths = {"snapshot": os.path.join(out_dir, "snapshot.json"), "report": os.path.join(out_dir, "report.md"),
              "digest": os.path.join(out_dir, "report.sha256")}
     with open(paths["snapshot"], "w", encoding="utf-8") as fh:
