@@ -33,3 +33,6 @@ Genera `usage-report.md` y `usage-report.json` (orden estable; con los mismos da
 ## Validación
 
 Qdrant: solo respuestas simuladas (L1). PostgreSQL: PostgreSQL 16 real local (pruebas de integración). Ninguno probado contra servicios gestionados en producción.
+
+---
+Volver a [[empresa]]

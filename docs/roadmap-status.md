@@ -58,3 +58,6 @@ Conflictos previsibles: `apps/web/app/(app)/page.tsx` (#10 y #16), `schemas.py`,
 | RDS en el colector de AWS | Opt-in (`include_rds`), L2; Aurora no se evalúa |
 | Web: tres cifras de ahorro | Estimado, aprobado y observado en la pantalla de cada recomendación (con atribución, límites y líneas base) |
 | Anclaje de la auditoría | `audit-anchor`: archivo de solo-añadir encadenado + webhook + verificación; **falta programarlo y guardar el archivo fuera del servidor** (lista de lanzamiento) |
+
+---
+Volver a [[empresa]]

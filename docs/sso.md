@@ -120,3 +120,6 @@ SSO_REQUIRED_AMR=mfa            # opcional: rechaza si el IdP no declara un segu
 | «El inicio de sesión no se completó en este navegador» | Cookie de flujo ausente: el callback se abrió en otro navegador, tardó más de 10 min, o `PUBLIC_WEB_URL` no coincide con el dominio real. |
 | «Perteneces a demasiados grupos…» | Entra no incluye los grupos (más de ~200). Usa roles de aplicación. |
 | «Ya existe una cuenta con tu correo…» | Ver la sección 4 sobre `SSO_LINK_EXISTING`. |
+
+---
+Volver a [[empresa]]

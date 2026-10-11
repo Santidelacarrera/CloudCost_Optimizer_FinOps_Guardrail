@@ -74,3 +74,6 @@ observado solo existe tras desplegar un cambio ([savings-methodology.md](savings
 | — | — | — | **Ninguna ejecución real todavía** | — |
 
 Añade aquí cada ejecución (y adjunta `snapshot.json` anonimizado) para que el estado «validado contra una cuenta real» sea verificable.
+
+---
+Volver a [[empresa]]

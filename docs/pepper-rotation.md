@@ -73,3 +73,6 @@ obliga a un hash nuevo) o retira el pepper viejo cuanto antes aceptando el costo
 - Contra PostgreSQL real (corre en CI): `tests/integration/test_pepper_rotation_db.py` — contraseña, 2FA y códigos de recuperación creados
   con el pepper viejo funcionan tras rotar, se migran en el login y el comando de re-cifrado no pierde el segundo factor.
 - **No verificado:** un ensayo en tu entorno real. Hazlo una vez en una copia (restaurada de un backup) antes de depender de esto.
+
+---
+Volver a [[empresa]]

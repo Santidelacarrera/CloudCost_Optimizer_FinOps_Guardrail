@@ -33,3 +33,6 @@ Niveles de alerta: `warn` (≥ `warn_ratio` del límite), `forecast` (a ritmo li
 * `cloud_spend` depende de que haya costes recolectados; sin datos, el gasto es 0 y no alerta.
 * El medidor se alimenta del que llama: un servicio que no registre su uso no queda contabilizado.
 * Probado con PostgreSQL real local (RLS, solo-añadir, aislamiento entre organizaciones) y sin AWS real.
+
+---
+Volver a [[empresa]]

@@ -43,3 +43,6 @@ Qué está resuelto en el repositorio, qué depende de ti y qué conviene hacer 
 - [ ] Prueba de penetración externa del módulo de autenticación y del BFF antes de aceptar clientes de pago.
 - [ ] Prueba de carga con tráfico realista (la medición actual es de un solo proceso).
 - [ ] Azure, GCP, GitLab y Kubernetes: siguen en las fases posteriores del README.
+
+---
+Volver a [[empresa]]

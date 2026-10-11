@@ -251,3 +251,6 @@ si ese día la cuenta tiene facturación real; un hueco de datos no es un cero.
 - Kubernetes (`RIGHTSIZE_WORKLOAD`) no tiene coste facturado por contenedor: solo admite ahorro declarado.
 
 El informe de demostración (`docs/demo/informe-ahorro-demo.md`, datos sintéticos) enseña cada desenlace posible.
+
+---
+Volver a [[empresa]]

@@ -83,3 +83,6 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 4. **Cuentas múltiples**: descubrimiento de cuentas vinculadas y un rol por cuenta.
 
 Hasta entonces, esta página y el README dicen lo mismo: lo no validado contra un sistema real se presenta como no validado.
+
+---
+Volver a [[empresa]]

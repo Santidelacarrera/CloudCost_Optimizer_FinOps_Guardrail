@@ -68,3 +68,6 @@ docker compose ... exec api python -m cloudcost.cli audit-anchor --file /anclas/
 - `--verify-only` solo comprueba. Programa la ejecución con cron/systemd y **alerta si el código de salida no es 0**.
 - **El valor está en dónde guardas el archivo**: copia `audit-anchors.jsonl` a otro servidor o a un bucket con retención/versionado. Si vive en el mismo servidor y con los mismos permisos que la base, quien reescribe la base reescribe también el archivo.
 - Un archivo comprometido nunca se extiende: se informa y se detiene hasta que lo revises.
+
+---
+Volver a [[empresa]]
