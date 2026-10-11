@@ -4,9 +4,8 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from dbkit import admin, new_tenant, require_db, result
 from fastapi import Request
-
-from tests.dbkit import admin, new_tenant, require_db, result
 
 PASSWORD = "Tr3n-Azul-Lluvia-Cafe"
 

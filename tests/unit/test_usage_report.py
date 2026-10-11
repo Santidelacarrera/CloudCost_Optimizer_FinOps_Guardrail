@@ -7,8 +7,7 @@ from datetime import datetime, timezone
 from cloudcost import cli
 from cloudcost.domain.budgets import BudgetPolicy
 from cloudcost.reports.optimization import build_report, to_markdown
-
-from tests.unit.test_datastore_rules import collect, info
+from test_datastore_rules import collect, info
 
 NOW = datetime(2026, 10, 15, 12, 0, tzinfo=timezone.utc)
 
