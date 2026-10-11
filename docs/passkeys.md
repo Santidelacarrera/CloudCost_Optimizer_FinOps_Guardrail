@@ -53,3 +53,6 @@ modelos de llave se aceptan. Si necesitas esa política (p. ej. solo YubiKey cer
   contraseña (cuentas deshabilitadas, sin verificar o SSO), retirada, `reset-mfa` del operador y aislamiento por organización (RLS).
 - Prueba de punta a punta (`apps/web/e2e/passkeys.spec.ts`) con un autenticador **virtual** de Chromium: registro, 2FA, entrada sin contraseña y retirada.
 - **No probado** con dispositivos reales (Windows Hello, Touch ID, Android, YubiKey) ni con Safari/Firefox: hazlo en tu dominio definitivo antes del lanzamiento.
+
+---
+Volver a [[empresa]]

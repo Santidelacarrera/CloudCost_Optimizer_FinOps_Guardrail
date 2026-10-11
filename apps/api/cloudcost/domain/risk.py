@@ -1,7 +1,16 @@
 """Clasificación de riesgo, impacto y prioridad de una recomendación."""
 from __future__ import annotations
 
-from .rules import ACTION_DELETE_SNAPSHOT, ACTION_RESIZE, ACTION_RIGHTSIZE_WORKLOAD, Finding
+from .rules import (
+    ACTION_DELETE_SNAPSHOT,
+    ACTION_DROP_UNUSED_INDEX,
+    ACTION_QUANTIZE_COLLECTION,
+    ACTION_RECLAIM_TABLE_BLOAT,
+    ACTION_REDUCE_REPLICATION,
+    ACTION_RESIZE,
+    ACTION_RIGHTSIZE_WORKLOAD,
+    Finding,
+)
 
 LOW, MEDIUM, HIGH = "LOW", "MEDIUM", "HIGH"
 PROTECTED_ENVIRONMENTS = ("production", "unknown")     # lo desconocido se trata como producción (defensivo)
@@ -18,6 +27,12 @@ def classify_risk(finding: Finding) -> str:
     if finding.action == ACTION_RIGHTSIZE_WORKLOAD:
         # Bajar requests reinicia pods (rolling update) pero no borra nada: como un resize. Sin HPA ni OOM la regla ya lo descartó.
         return LOW if (not prod and finding.confidence >= 0.85) else MEDIUM
+
+    # Bases de datos consultivas: reversibles pero con efecto sobre rendimiento, precisión o disponibilidad → MEDIUM (LOW si es solo recuperar espacio)
+    if finding.action == ACTION_RECLAIM_TABLE_BLOAT:
+        return MEDIUM if prod else LOW
+    if finding.action in (ACTION_QUANTIZE_COLLECTION, ACTION_REDUCE_REPLICATION, ACTION_DROP_UNUSED_INDEX):
+        return HIGH if (prod and finding.action != ACTION_QUANTIZE_COLLECTION) else MEDIUM
 
     # HIGH: bases de datos, redes, clusters críticos y cambios arquitectónicos
     if res.resource_type in ("database", "kubernetes") or res.service in ("rds", "vpc", "eks"):

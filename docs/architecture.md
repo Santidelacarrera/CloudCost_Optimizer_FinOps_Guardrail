@@ -35,3 +35,6 @@ Tras `DEPLOYED`, mide el ahorro con los costes facturados (ventanas alineadas, c
 
 ## Estimado, aprobado y observado
 Tres cifras separadas, nunca sumadas. Hay además un estado `EXPIRED` (el recurso o la condición dejó de existir antes de aprobar) y marcas de obsolescencia en las aprobadas.
+
+---
+Volver a [[empresa]]

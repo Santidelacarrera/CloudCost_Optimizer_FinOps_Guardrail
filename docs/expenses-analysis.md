@@ -52,3 +52,6 @@ Además del análisis de gasto, **Importar CSV/Excel** (`/imports`, plantilla co
 | Kubernetes | `k8s_workload` | requests sobredimensionados (CPU `500m` o `0.5`; memoria `512Mi` o bytes) |
 
 Los servicios **sin regla** (S3, Lambda, DynamoDB, etc.) no se pueden importar como inventario: no generarían nunca una recomendación. Añadirlos exige primero escribir su regla, no solo aceptar el formato. Además, la reducción de tamaño de VM de Azure/GCP solo se propone si el tipo de máquina está en la tabla de precios (hoy, nombres de AWS): para otros tipos el archivo sí se importa, pero no habrá propuesta de cambio de tamaño.
+
+---
+Volver a [[empresa]]

@@ -62,3 +62,6 @@ fc.exe k8s-lab-out\report.md otro\report.md       # sin diferencias
 - **Pods en `Pending`**: poca memoria en el clúster; `minikube delete` y vuelve a crearlo con más (`minikube start --memory 8192`).
 
 Para borrarlo todo: `minikube delete`.
+
+---
+Volver a [[empresa]]

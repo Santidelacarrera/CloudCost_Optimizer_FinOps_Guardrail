@@ -30,3 +30,6 @@ Si tienes un dominio de marketing y otro transaccional, usa un subdominio para C
 - Límites: 3 correos por dirección y 10 por IP cada hora, para que nadie use el formulario para inundar una bandeja.
 - Si el proveedor falla, el error queda en el log de la API (`no se pudo enviar el correo a …`) y la persona puede pedir otro desde la pantalla.
 - Los enlaces valen 24 h (confirmar), 1 h (recuperar) o 7 días (invitar) y sirven una sola vez.
+
+---
+Volver a [[empresa]]

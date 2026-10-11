@@ -52,6 +52,7 @@ LIST_ROUTES = [
     "/api/v1/costs?granularity=MONTHLY", "/api/v1/costs?granularity=DAILY&group_by=service,region,period", "/api/v1/dashboard/summary",
     "/api/v1/dashboard/savings-projection", "/api/v1/reports/executive?format=xlsx", "/api/v1/auth/members", "/api/v1/auth/invitations",
     "/api/v1/auth/sessions", "/api/v1/auth/passkeys", "/api/v1/auth/me",
+    "/api/v1/budgets", "/api/v1/budgets/alerts",
 ]
 LIST_TEMPLATES = {("GET", p.split("?")[0]) for p in LIST_ROUTES}
 # Rutas con referencias a objetos en el cuerpo o en la consulta (probadas aparte).
@@ -64,6 +65,7 @@ OWN_ACCOUNT_OR_STATELESS = {
     ("POST", "/api/v1/auth/sessions/revoke-others"), ("POST", "/api/v1/auth/invitations"), ("POST", "/api/v1/cloud-accounts"),
     ("POST", "/api/v1/repositories"), ("POST", "/api/v1/onboarding/aws/cloudformation"), ("POST", "/api/v1/policies/evaluate-plan"),
     ("POST", "/api/v1/expenses/analyze"), ("GET", "/api/v1/imports/template"),
+    ("PUT", "/api/v1/budgets"), ("POST", "/api/v1/budgets/check"), ("POST", "/api/v1/budgets/usage"),
 }
 
 

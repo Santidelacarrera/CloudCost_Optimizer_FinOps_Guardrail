@@ -166,6 +166,55 @@ def audit_anchor(args: argparse.Namespace) -> int:
     return code
 
 
+def usage_report(args: argparse.Namespace) -> int:
+    """Recolecta Qdrant y/o PostgreSQL (solo lectura), aplica las reglas y escribe un informe Markdown/JSON. No usa la base de datos de la plataforma."""
+    import json
+    import os
+    from datetime import datetime, timezone
+
+    from .collectors.postgres import PostgresCollector
+    from .collectors.qdrant import QdrantCollector
+    from .domain.budgets import BudgetPolicy
+    from .domain.rules import RuleConfig
+    from .reports.optimization import build_report, to_markdown
+    from .secrets import SecretResolver
+
+    if not (args.qdrant_url or args.pg_dsn_env):
+        print("Indica al menos --qdrant-url o --pg-dsn-env.", file=sys.stderr)
+        return 2
+    secrets, env = SecretResolver(), args.environment
+    resources, warnings, sources = [], [], []
+    try:
+        if args.qdrant_url:
+            cfg = {"qdrant_url": args.qdrant_url, "environment": env,
+                   **({"credentials_ref": f"env:{args.qdrant_key_env}"} if args.qdrant_key_env else {})}
+            res = QdrantCollector({"account_ref": args.cluster_ref, "provider_config": cfg}, secrets).collect()
+            resources += res.resources
+            warnings += res.warnings
+            sources.append("qdrant")
+        if args.pg_dsn_env:
+            cfg = {"environment": env, "credentials_ref": f"env:{args.pg_dsn_env}"}
+            res = PostgresCollector({"account_ref": args.cluster_ref, "provider_config": cfg}, secrets).collect()
+            resources += res.resources
+            warnings += res.warnings
+            sources.append("postgres")
+    except Exception as exc:  # noqa: BLE001 — se informa sin volcar detalles (pueden contener rutas o hosts)
+        from . import redaction
+        print(f"No se pudo recolectar: {type(exc).__name__}: {redaction.redact_text(str(exc))[:200]}", file=sys.stderr)
+        return 1
+    budget = (BudgetPolicy("api_usage", args.budget_limit, mode=args.budget_mode) if args.budget_limit is not None else None)
+    rep = build_report(resources, cfg=RuleConfig(), generated_at=datetime.now(timezone.utc), tenant=args.tenant, budget=budget,
+                       spent_usd=args.spent or 0.0, warnings=warnings, sources=sources)
+    os.makedirs(args.out_dir, exist_ok=True)
+    with open(os.path.join(args.out_dir, "usage-report.md"), "w", encoding="utf-8") as fh:
+        fh.write(to_markdown(rep))
+    with open(os.path.join(args.out_dir, "usage-report.json"), "w", encoding="utf-8") as fh:
+        json.dump(rep, fh, ensure_ascii=False, indent=1, sort_keys=True, default=str)
+    print(f"report: {os.path.join(args.out_dir, 'usage-report.md')}")
+    print(f"recursos: {rep['resources_seen']} · hallazgos: {len(rep['findings'])} · ahorro estimado: USD {rep['total_estimated_monthly_savings']:.2f}/mes")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m cloudcost.cli", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -211,6 +260,18 @@ def main(argv: list[str] | None = None) -> int:
     a_p.add_argument("--webhook", help="URL https que recibe las anclas nuevas (p. ej. un monitor externo)")
     a_p.add_argument("--verify-only", action="store_true", help="Solo comprueba las anclas anteriores; no añade nuevas")
     a_p.set_defaults(func=audit_anchor)
+    u_p = sub.add_parser("usage-report", help="Informe de optimización de Qdrant y PostgreSQL (solo lectura) con comparación opcional contra un presupuesto")
+    u_p.add_argument("--qdrant-url", help="URL del Qdrant (https; http solo en red interna)")
+    u_p.add_argument("--qdrant-key-env", help="NOMBRE de la variable CC_SECRET_* con la API key de Qdrant (nunca el valor)")
+    u_p.add_argument("--pg-dsn-env", help="NOMBRE de la variable CC_SECRET_* con el DSN de PostgreSQL (nunca el valor)")
+    u_p.add_argument("--environment", default="production", choices=["production", "staging", "test", "development", "unknown"])
+    u_p.add_argument("--cluster-ref", default="datastores", help="Nombre del clúster/servicio en el informe")
+    u_p.add_argument("--tenant", default="", help="Nombre del tenant (solo para el encabezado)")
+    u_p.add_argument("--budget-limit", type=float, help="Límite mensual en USD para comparar el gasto")
+    u_p.add_argument("--budget-mode", default="alert", choices=["alert", "degrade", "block"])
+    u_p.add_argument("--spent", type=float, help="Gasto del mes hasta ahora (USD) para la comparación")
+    u_p.add_argument("--out-dir", default="usage-report-out")
+    u_p.set_defaults(func=usage_report)
     args = parser.parse_args(argv)
     return args.func(args)
 

@@ -85,3 +85,6 @@ El hash de contraseñas (scrypt, `N=2^15, r=8, p=3`) cuesta a propósito ~330 ms
 Medido en una máquina de 2 vCPU: **~6 inicios de sesión por segundo** de rendimiento sostenido, que son más de 500 000 al día si la CPU no hiciera otra cosa: de sobra para cientos de usuarios.
 Lo que importa es un ataque de volumen: los límites por cuenta y por IP lo frenan y la regla `PosibleRellenoDeCredenciales` avisa. Si tu tráfico real crece, sube vCPU o réplicas de la API
 (los límites viven en la base de datos, así que se comparten entre réplicas).
+
+---
+Volver a [[empresa]]

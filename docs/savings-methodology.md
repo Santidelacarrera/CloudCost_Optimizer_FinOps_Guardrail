@@ -114,6 +114,71 @@ ahorro_mensual = (precio_hora(clase) × 730 + precio_GB_mes × almacenamiento_GB
 **Límites**
 - Una base «sin conexiones» puede ser un entorno dormido que se usa a fin de mes o en una recuperación.
 
+### `qdrant_quantization.v1` · qdrant_quantization (reserved)
+
+Cuantizar con int8 los vectores que hoy se sirven desde RAM, guardando los originales en disco.
+
+```
+ahorro_mensual = (0,75 × RAM_vectores_GiB × precio_RAM_GiB_mes − tamaño_vectores_GiB × precio_disco_GiB_mes) × réplicas
+```
+
+**Supuestos**
+- RAM_vectores = puntos × Σ dimensiones × bytes por dimensión × 1,5 (índice y metadatos), solo de los vectores que no están `on_disk`.
+- La cuantización escalar int8 deja 1 byte por dimensión en RAM (−75 %) y los vectores originales pasan a disco, que se paga aparte.
+- Se valora lo reservado en RAM con el precio por GiB de un nodo de propósito general; no es la factura del nodo.
+- En un entorno que no es producción con varias réplicas, `réplicas` vale 1: el ahorro de reducir las réplicas se cuenta aparte (qdrant_replication_nonprod) y ambos se suman sin solaparse.
+
+**Límites**
+- La cuantización reduce la precisión de la búsqueda (recall): prueba con tus consultas y usa reordenación (rescore) antes de aplicarla.
+- El ahorro solo se materializa si el nodo o el plan se reducen de tamaño.
+
+### `qdrant_replication_nonprod.v1` · qdrant_replication_nonprod (reserved)
+
+Dejar una sola réplica en una colección de un entorno que no es producción.
+
+```
+ahorro_mensual = (replication_factor − 1) × RAM_vectores_GiB × precio_RAM_GiB_mes
+```
+
+**Supuestos**
+- Cada réplica mantiene su propia copia de los vectores en RAM.
+- El entorno (desarrollo, pruebas o preproducción) lo declara la cuenta; lo desconocido se trata como producción y no se propone.
+
+**Límites**
+- Con una sola réplica, perder el nodo obliga a restaurar desde un snapshot.
+
+### `pg_unused_index.v1` · pg_unused_index (exact)
+
+Eliminar un índice sin escaneos durante toda la ventana de estadísticas y que no respalda ninguna restricción.
+
+```
+ahorro_mensual = tamaño_índice_GiB × precio_almacenamiento_GiB_mes
+```
+
+**Supuestos**
+- Las estadísticas (`pg_stat_user_indexes`) cubren al menos el número de días del umbral y no se reiniciaron durante ese tiempo.
+- Se excluyen índices únicos, de clave primaria, de exclusión y los que respaldan una restricción.
+
+**Límites**
+- Las estadísticas son por servidor: el índice puede usarse en una réplica de lectura.
+- En un servicio gestionado el almacenamiento asignado no suele poder reducirse: el ahorro llega al migrar a un volumen menor; mientras tanto se gana en escrituras.
+
+### `pg_table_bloat.v1` · pg_table_bloat (upper_bound)
+
+Recuperar el espacio de una tabla con una proporción alta de tuplas muertas (VACUUM o pg_repack).
+
+```
+ahorro_mensual ≤ tamaño_tabla_GiB × proporción_tuplas_muertas × precio_almacenamiento_GiB_mes
+```
+
+**Supuestos**
+- La proporción de tuplas muertas sale de `pg_stat_user_tables` (n_dead_tup frente a n_live_tup), que son estimaciones.
+- Se calcula sobre el heap de la tabla (sin índices).
+
+**Límites**
+- Cota SUPERIOR: un VACUUM normal reutiliza el espacio dentro del archivo pero no siempre lo devuelve al sistema operativo; solo VACUUM FULL o pg_repack lo reducen.
+- En un servicio gestionado el almacenamiento asignado no suele poder reducirse sin migrar.
+
 ### `k8s_overprovisioned.v1` · k8s_overprovisioned (reserved)
 
 Bajar los requests de un contenedor hasta el p95 de uso × holgura (CPU) o el máximo × holgura (memoria).
@@ -186,3 +251,6 @@ si ese día la cuenta tiene facturación real; un hueco de datos no es un cero.
 - Kubernetes (`RIGHTSIZE_WORKLOAD`) no tiene coste facturado por contenedor: solo admite ahorro declarado.
 
 El informe de demostración (`docs/demo/informe-ahorro-demo.md`, datos sintéticos) enseña cada desenlace posible.
+
+---
+Volver a [[empresa]]

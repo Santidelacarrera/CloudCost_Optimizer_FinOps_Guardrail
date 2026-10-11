@@ -59,3 +59,6 @@ Colector, regla y parche se prueban con un Prometheus simulado y archivos YAML r
 alias, bomba de alias, deriva y ambigüedad); el alta, el escaneo, la recomendación, la aprobación y el PR se prueban contra PostgreSQL real en CI.
 **No se han ejecutado las consultas PromQL contra un Prometheus real**: en el primer escaneo compara los requests y el uso de un par de
 workloads con tu Grafana antes de aprobar nada.
+
+---
+Volver a [[empresa]]

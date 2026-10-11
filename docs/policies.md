@@ -44,3 +44,6 @@ Coloca archivos `.rego` con `package cloudcost.guardrail` y reglas `deny contain
 
 ## Imagen y CI
 El `Dockerfile` de la API copia el binario de la imagen oficial `openpolicyagent/opa:1.9.0-static` y `guardrail.rego`. El job `api` de CI instala la misma versión para que las pruebas usen el motor real; el job `policies` ejecuta `opa check --strict`, `opa fmt --fail` y `opa test`.
+
+---
+Volver a [[empresa]]

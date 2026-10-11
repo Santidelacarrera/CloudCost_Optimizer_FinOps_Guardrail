@@ -72,3 +72,6 @@ Los colectores y el cliente HTTP se prueban con respuestas simuladas (formas de 
 reglas, parches Terraform, paginación, límites de tasa, fallos parciales, firma del JWT de GCP. El alta de cuentas y el escaneo
 completo se prueban contra PostgreSQL real en CI. **Todavía no se han ejecutado contra una suscripción o proyecto reales**:
 la primera vez, haz un escaneo y revisa que los recursos y los avisos de la pantalla de escaneos coincidan con tu consola.
+
+---
+Volver a [[empresa]]

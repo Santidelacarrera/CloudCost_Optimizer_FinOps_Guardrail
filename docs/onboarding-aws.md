@@ -52,3 +52,6 @@ Sin esas variables el endpoint responde `503` con el motivo, y el cliente puede 
 - Local: parseo de la plantilla, paridad con Terraform y forma del enlace (`pytest tests/unit/test_cloudformation.py`).
 - CI: `cfn-lint` oficial sobre la plantilla (job `cloudformation`).
 - **No verificado aquí:** el despliegue real de la pila en una cuenta AWS. Pruébalo con la guía [aws-lab-validation.md](aws-lab-validation.md) antes de ofrecerlo a clientes.
+
+---
+Volver a [[empresa]]
