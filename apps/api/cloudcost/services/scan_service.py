@@ -26,7 +26,7 @@ from ..iac.patcher import PatchError, build_patch
 from ..iac.terraform import IacIndex
 from ..llm.advisor import advise
 from ..secrets import SecretResolver
-from . import audit, lifecycle
+from . import audit, budgets, lifecycle
 from .explain import build_explanation
 from .git_factory import get_git_provider
 from .recommendations import upsert_finding
@@ -190,16 +190,34 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
     account, repo = ctx["account"], ctx["repo"]
     warnings: list[str] = []
 
+    # ---- 0) guardrail de presupuesto: antes de gastar, comprueba que la tarea cabe en el límite del tenant
+    est_cost = budgets.scan_cost_estimate(account, settings)
+    with tenant_tx(org_id) as conn:
+        budget = budgets.preflight(conn, org_id, "api_usage", est_cost)
+        if not budget.allowed and not budget.degrade:
+            audit.record(conn, org_id, budgets.BUDGET_EVALUATED, entity_type="scan", entity_id=scan_id,
+                         payload={"action": "blocked", **budget.to_dict()})
+    if not budget.allowed and not budget.degrade:
+        raise budgets.BudgetExceeded("Bloqueado por presupuesto: " + "; ".join(budget.reasons))
+    use_ce = settings.aws_cost_explorer_resources and not budget.degrade
+    if budget.degrade:
+        warnings.append("Presupuesto agotado: el escaneo se ejecuta sin Cost Explorer (costes estimados por tabla de precios). "
+                        + "; ".join(budget.reasons))
+
     # ---- 1) red: nube + IaC (sin transacción abierta)
     collector = collector_factory(
         account, secrets=secrets, demo_enabled=settings.demo_enabled,
-        use_cost_explorer=settings.aws_cost_explorer_resources,
+        use_cost_explorer=use_ce,
         cost_options={"cost_tag_key": settings.aws_cost_tag_key, "cost_history_months": settings.aws_cost_history_months,
                       "cost_metric": settings.aws_cost_metric,
                       "ce_request_budget": settings.aws_ce_request_budget},
         on_api_error=lambda api: metrics.CLOUD_API_ERRORS.labels(account["provider"], api).inc())
     result = collector.collect()
     warnings += [redaction.redact_text(w) for w in result.warnings]
+    ce_used = getattr(getattr(collector, "budget", None), "used", 0) if use_ce else 0
+    if ce_used:
+        with tenant_tx(org_id) as conn:                              # el gasto real queda medido aunque el escaneo falle después
+            budgets.record_usage(conn, org_id, "cost_explorer", ce_used * budgets.CE_REQUEST_USD, quantity=ce_used, ref=str(scan_id))
 
     index = None
     if repo:

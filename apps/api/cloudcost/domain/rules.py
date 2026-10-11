@@ -39,6 +39,13 @@ ACTION_DELETE_VOLUME = "DELETE_VOLUME"
 ACTION_DELETE_SNAPSHOT = "DELETE_SNAPSHOT"
 ACTION_DELETE_DB = "DELETE_DB_INSTANCE"
 ACTION_RIGHTSIZE_WORKLOAD = "RIGHTSIZE_WORKLOAD"
+# Acciones CONSULTIVAS: no hay un cambio de infraestructura como código que generar (se aplican con la API de Qdrant o con SQL). La plataforma las
+# propone con su evidencia y su ahorro estimado, pero nunca abre un Pull Request para ellas (la política las deja en «propuesta»).
+ACTION_QUANTIZE_COLLECTION = "QUANTIZE_VECTOR_COLLECTION"
+ACTION_REDUCE_REPLICATION = "REDUCE_COLLECTION_REPLICATION"
+ACTION_DROP_UNUSED_INDEX = "DROP_UNUSED_INDEX"
+ACTION_RECLAIM_TABLE_BLOAT = "RECLAIM_TABLE_BLOAT"
+ADVISORY_ACTIONS = frozenset({ACTION_QUANTIZE_COLLECTION, ACTION_REDUCE_REPLICATION, ACTION_DROP_UNUSED_INDEX, ACTION_RECLAIM_TABLE_BLOAT})
 
 
 @dataclass(frozen=True)
@@ -70,6 +77,16 @@ class RuleConfig:
     k8s_min_reduction: float = 0.30        # solo se propone si el recorte es de al menos este % de lo pedido
     k8s_min_cpu_cores: float = 0.05
     k8s_min_memory_mib: int = 64
+    # Bases de datos vectoriales (Qdrant) y relacionales (PostgreSQL): precios y umbrales
+    ram_gib_month_usd: float = 3.066            # RAM por GiB-mes (misma base que Kubernetes: 0,0042 × 730)
+    disk_gib_month_usd: float = 0.08            # disco SSD de bloque por GiB-mes
+    pg_storage_gib_month_usd: float = 0.115     # almacenamiento de la base por GiB-mes
+    qdrant_min_ram_gib: float = 0.5             # RAM de vectores mínima para proponer cuantización
+    qdrant_min_indexed_ratio: float = 0.9       # la colección debe estar indexada (si no, la medida de RAM aún no es la final)
+    pg_min_stats_days: int = 7                  # días de estadísticas mínimos para afirmar que un índice no se usa
+    pg_min_index_mib: int = 50                  # índices más pequeños no valen la pena
+    pg_bloat_min_mib: int = 100
+    pg_bloat_dead_ratio: float = 0.20           # proporción de tuplas muertas para proponer recuperar espacio
     min_monthly_savings: float = 5.0
     # Si es True, no se propone apagar/reducir/eliminar nada cuyo costo sea solo una estimación por tabla de precios
     # (exige costo real: Cost Explorer o importación). Por defecto se propone igual, marcando la base del costo.
@@ -533,3 +550,10 @@ def evaluate_all(resources: list[NormalizedResource], cfg: RuleConfig) -> list[F
     for res in resources:
         out.extend(evaluate_resource(res, cfg))
     return out
+
+
+# Reglas de bases de datos (Qdrant, PostgreSQL). Se importan al FINAL: usan Finding/RuleConfig definidos arriba (importación circular intencionada;
+# no importes `rules_datastores` directamente, hazlo siempre a través de este módulo).
+from . import rules_datastores as _datastores  # noqa: E402
+
+RULES.extend(_datastores.RULES)

@@ -93,6 +93,43 @@ FORMULAS: dict[str, Formula] = {f.rule_id: f for f in (
         ("Una base «sin conexiones» puede ser un entorno dormido que se usa a fin de mes o en una recuperación.",),
     ),
     Formula(
+        "qdrant_quantization", 1, RESERVED,
+        "ahorro_mensual = (0,75 × RAM_vectores_GiB × precio_RAM_GiB_mes − tamaño_vectores_GiB × precio_disco_GiB_mes) × réplicas",
+        "Cuantizar con int8 los vectores que hoy se sirven desde RAM, guardando los originales en disco.",
+        ("RAM_vectores = puntos × Σ dimensiones × bytes por dimensión × 1,5 (índice y metadatos), solo de los vectores que no están `on_disk`.",
+         "La cuantización escalar int8 deja 1 byte por dimensión en RAM (−75 %) y los vectores originales pasan a disco, que se paga aparte.",
+         "Se valora lo reservado en RAM con el precio por GiB de un nodo de propósito general; no es la factura del nodo.",
+         "En un entorno que no es producción con varias réplicas, `réplicas` vale 1: el ahorro de reducir las réplicas se cuenta aparte (qdrant_replication_nonprod) y ambos se suman sin solaparse."),
+        ("La cuantización reduce la precisión de la búsqueda (recall): prueba con tus consultas y usa reordenación (rescore) antes de aplicarla.",
+         "El ahorro solo se materializa si el nodo o el plan se reducen de tamaño."),
+    ),
+    Formula(
+        "qdrant_replication_nonprod", 1, RESERVED,
+        "ahorro_mensual = (replication_factor − 1) × RAM_vectores_GiB × precio_RAM_GiB_mes",
+        "Dejar una sola réplica en una colección de un entorno que no es producción.",
+        ("Cada réplica mantiene su propia copia de los vectores en RAM.",
+         "El entorno (desarrollo, pruebas o preproducción) lo declara la cuenta; lo desconocido se trata como producción y no se propone."),
+        ("Con una sola réplica, perder el nodo obliga a restaurar desde un snapshot.",),
+    ),
+    Formula(
+        "pg_unused_index", 1, EXACT,
+        "ahorro_mensual = tamaño_índice_GiB × precio_almacenamiento_GiB_mes",
+        "Eliminar un índice sin escaneos durante toda la ventana de estadísticas y que no respalda ninguna restricción.",
+        ("Las estadísticas (`pg_stat_user_indexes`) cubren al menos el número de días del umbral y no se reiniciaron durante ese tiempo.",
+         "Se excluyen índices únicos, de clave primaria, de exclusión y los que respaldan una restricción."),
+        ("Las estadísticas son por servidor: el índice puede usarse en una réplica de lectura.",
+         "En un servicio gestionado el almacenamiento asignado no suele poder reducirse: el ahorro llega al migrar a un volumen menor; mientras tanto se gana en escrituras."),
+    ),
+    Formula(
+        "pg_table_bloat", 1, UPPER_BOUND,
+        "ahorro_mensual ≤ tamaño_tabla_GiB × proporción_tuplas_muertas × precio_almacenamiento_GiB_mes",
+        "Recuperar el espacio de una tabla con una proporción alta de tuplas muertas (VACUUM o pg_repack).",
+        ("La proporción de tuplas muertas sale de `pg_stat_user_tables` (n_dead_tup frente a n_live_tup), que son estimaciones.",
+         "Se calcula sobre el heap de la tabla (sin índices)."),
+        ("Cota SUPERIOR: un VACUUM normal reutiliza el espacio dentro del archivo pero no siempre lo devuelve al sistema operativo; solo VACUUM FULL o pg_repack lo reducen.",
+         "En un servicio gestionado el almacenamiento asignado no suele poder reducirse sin migrar."),
+    ),
+    Formula(
         "k8s_overprovisioned", 1, RESERVED,
         "ahorro_mensual = (Δcpu_cores × precio_vCPU_hora + Δmemoria_GiB × precio_GiB_hora) × 730 × réplicas",
         "Bajar los requests de un contenedor hasta el p95 de uso × holgura (CPU) o el máximo × holgura (memoria).",
@@ -135,6 +172,8 @@ def _inputs(finding: "Finding") -> dict[str, Any]:
                     "price_ratio": round(tgt.hourly_usd / cur.hourly_usd, 4)}
     if finding.rule_id in ("ec2_idle", "ebs_orphan", "snapshot_old", "rds_idle"):
         return {"reference_monthly_cost": cost}
+    if finding.rule_id in ("qdrant_quantization", "qdrant_replication_nonprod", "pg_unused_index", "pg_table_bloat"):
+        return {"reference_monthly_cost": cost, "price_basis": finding.evidence.get("price_basis")}
     if finding.rule_id == "k8s_overprovisioned":
         return {"reference_monthly_cost": cost, "price_basis": finding.evidence.get("price_basis"),
                 "replicas": finding.evidence.get("replicas")}

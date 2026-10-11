@@ -46,7 +46,7 @@ VIEWER_ALLOWED = {
     ("GET", "/api/v1/cloud-accounts"), ("GET", "/api/v1/repositories"), ("GET", "/api/v1/dashboard/summary"), ("GET", "/api/v1/dashboard/savings-projection"),
     ("GET", "/api/v1/costs"), ("GET", "/api/v1/imports/template"), ("GET", "/api/v1/reports/executive"), ("GET", "/api/v1/recommendations"), ("GET", "/api/v1/recommendations/{rec_id}"),
     ("GET", "/api/v1/recommendations/{rec_id}/evidence"),
-    ("GET", "/api/v1/scans"), ("GET", "/api/v1/scans/{scan_id}"),
+    ("GET", "/api/v1/scans"), ("GET", "/api/v1/scans/{scan_id}"), ("GET", "/api/v1/budgets"), ("GET", "/api/v1/budgets/alerts"),
     ("GET", "/api/v1/auth/me"), ("POST", "/api/v1/auth/change-password"), ("GET", "/api/v1/auth/sessions"),
     ("POST", "/api/v1/auth/sessions/revoke-others"), ("DELETE", "/api/v1/auth/sessions/{session_id}"),
     ("POST", "/api/v1/auth/mfa/setup"), ("POST", "/api/v1/auth/mfa/enable"), ("POST", "/api/v1/auth/mfa/disable"),

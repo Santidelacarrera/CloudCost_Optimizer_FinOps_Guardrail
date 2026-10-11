@@ -46,6 +46,10 @@ Solo Kubernetes está en L3, y de forma limitada (minikube local, cargas sintét
 | `snapshot_old` | AWS, Azure, GCP | Eliminar (destructiva), ahorro = cota superior | `snapshot_old.v1` |
 | `rds_idle` | AWS RDS (colector real opt-in, demo y archivo) | Eliminar (destructiva) | `rds_idle.v1` |
 | `k8s_overprovisioned` | Kubernetes vía Prometheus | Ajustar `values.yaml` de Helm | `k8s_overprovisioned.v1` |
+| `qdrant_quantization` | Qdrant (colección) | Consultiva: activar cuantización escalar int8 | `qdrant_quantization.v1` |
+| `qdrant_replication_nonprod` | Qdrant (colección, no producción) | Consultiva: reducir réplicas | `qdrant_replication_nonprod.v1` |
+| `pg_unused_index` | PostgreSQL (índice) | Consultiva: `DROP INDEX CONCURRENTLY` (destructiva) | `pg_unused_index.v1` |
+| `pg_table_bloat` | PostgreSQL (tabla) | Consultiva: `VACUUM (ANALYZE)`, ahorro = cota superior | `pg_table_bloat.v1` |
 
 Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.md).
 
@@ -56,6 +60,8 @@ Detalle de fórmulas y supuestos: [savings-methodology.md](savings-methodology.m
 | Azure | VM, discos administrados, snapshots (REST); métricas de Azure Monitor | L1 | Coste = tabla de precios (sin coste real). Sin pruebas contra una suscripción real |
 | GCP | Compute Engine, discos persistentes, snapshots; Cloud Monitoring | L1 | Coste = tabla de precios. Sin pruebas contra un proyecto real |
 | Kubernetes | `requests`/`limits` frente a uso, vía **Prometheus** (kube-state-metrics + cAdvisor) | L3 (limitado) | No habla con la API de Kubernetes. Ejecutado contra minikube + Prometheus real el 2026-10-10 ([resultado](lab-results/k8s-minikube-2026-10-10.md)): 3 de 3 comprobaciones con 30 min y con 16 h de datos ([16 h](lab-results/k8s-minikube-2026-10-10-16h.md)); cargas sintéticas planas, sin facturación real. Falta probar 7 días |
+| Qdrant (`provider=qdrant`) | `GET /collections` y `/collections/{nombre}` (solo lectura, host fijado, sin redirecciones, API key por referencia a secreto) | L1 | Probado solo con respuestas simuladas; **sin servidor Qdrant real**. Coste = RAM estimada × precio configurable. Sin telemetría de uso por colección |
+| PostgreSQL (`provider=postgres`) | Catálogos fijos (`pg_stat_user_indexes`, `pg_stat_user_tables`, `pg_stat_database`, `pg_settings`…) con sesión `read_only` y límites de tiempo; DSN por referencia a secreto | L2 (limitado) | Ejecutado contra un PostgreSQL 16 real local en pruebas de integración; **no** contra RDS/Aurora. Un índice solo se declara sin uso con ≥ 7 días de estadísticas. Recomendaciones consultivas: no se aprueban ni se ejecutan desde la plataforma ([guía](usage-reports.md)) |
 | CSV / Excel importado | EC2, EBS, snapshots, RDS, Azure (vm/disk/snapshot), GCP (gce/pd/snapshot) y cargas de Kubernetes, con uso y coste (≤ 5 000 filas / 2 MB; `.xlsx` usa la primera hoja) | L1 | Coste del archivo tratado como verificado. Detalle: [expenses-analysis.md](expenses-analysis.md) |
 | Análisis de gasto desde archivo ([guía](expenses-analysis.md)) | Gastos genéricos, estados de obra, AWS CUR / Cost Explorer, Azure Cost Management, GCP Billing export, FOCUS y tablas con columnas propias (CSV o `.xlsx`) | L1 | Con archivos ficticios de la forma documentada; sin exportaciones reales. Solo análisis de factura: no ve recursos ni calcula ahorros |
 | Demostración | 21 recursos sintéticos de AWS | — | Solo con `DEMO_ENABLED=true` (prohibido en producción) |

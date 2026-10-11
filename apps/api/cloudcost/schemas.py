@@ -43,7 +43,7 @@ class VerifyIn(BaseModel):
 
 
 class CloudAccountIn(BaseModel):
-    provider: Literal["aws", "azure", "gcp", "kubernetes", "demo"]
+    provider: Literal["aws", "azure", "gcp", "kubernetes", "qdrant", "postgres", "demo"]
     account_ref: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$",
                              description="AWS: id de cuenta · Azure: id de suscripción · GCP: id de proyecto · Kubernetes: nombre del clúster")
     display_name: str = Field(min_length=1, max_length=120)
@@ -63,6 +63,11 @@ class CloudAccountIn(BaseModel):
     cpu_hour_usd: float | None = Field(default=None, gt=0, lt=10)
     mem_gib_hour_usd: float | None = Field(default=None, gt=0, lt=10)
     environment: Literal["production", "staging", "development", "test", "unknown"] | None = None
+    # Qdrant: URL del servicio (REST); credentials_ref = clave de API opcional. PostgreSQL: credentials_ref = secreto con el DSN (postgresql://…).
+    qdrant_url: str | None = Field(default=None, max_length=300)
+    ram_gib_month_usd: float | None = Field(default=None, gt=0, lt=1000)
+    disk_gib_month_usd: float | None = Field(default=None, gt=0, lt=100)
+    pg_storage_gib_month_usd: float | None = Field(default=None, gt=0, lt=100)
 
     @field_validator("external_id_ref", "credentials_ref")
     @classmethod
@@ -78,6 +83,20 @@ class CloudAccountIn(BaseModel):
                 raise ValueError("Región inválida")
             return self
         if self.provider == "demo":
+            return self
+        if self.provider == "qdrant":
+            from .collectors.netguard import DestinationError, validate_service_url
+
+            try:
+                self.qdrant_url = validate_service_url(self.qdrant_url or "", "URL de Qdrant")
+            except DestinationError as exc:
+                raise ValueError(str(exc)) from exc
+            self.regions = ["all"]
+            return self
+        if self.provider == "postgres":
+            if not self.credentials_ref:
+                raise ValueError("PostgreSQL requiere credentials_ref (referencia al secreto con el DSN; nunca el DSN)")
+            self.regions = ["all"]
             return self
         if self.provider == "kubernetes":
             from .collectors.kubernetes import PrometheusUrlError, validate_prometheus_url
@@ -120,6 +139,11 @@ class CloudAccountIn(BaseModel):
             return {k: v for k, v in cfg.items() if v}
         if self.provider == "aws":
             return {"include_rds": True} if self.include_rds else {}
+        if self.provider in ("qdrant", "postgres"):
+            cfg = {"qdrant_url": self.qdrant_url, "credentials_ref": self.credentials_ref, "environment": self.environment,
+                   "ram_gib_month_usd": self.ram_gib_month_usd, "disk_gib_month_usd": self.disk_gib_month_usd,
+                   "pg_storage_gib_month_usd": self.pg_storage_gib_month_usd}
+            return {k: v for k, v in cfg.items() if v}
         cfg = {"tenant_id": self.tenant_id, "client_id": self.client_id, "credentials_ref": self.credentials_ref}
         return {k: v for k, v in cfg.items() if v and self.provider in ("azure", "gcp")}
 

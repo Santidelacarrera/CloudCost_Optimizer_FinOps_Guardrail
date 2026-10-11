@@ -215,6 +215,8 @@ Puertos configurables con `WEB_PORT` / `API_PORT`.
 | AWS (rol de solo lectura, CloudFormation o Terraform, GitHub/GitLab, webhooks) | [Runbook](docs/runbook.md) · [Onboarding AWS](docs/onboarding-aws.md) |
 | Azure y GCP | [docs/onboarding-azure-gcp.md](docs/onboarding-azure-gcp.md) |
 | Kubernetes / Helm | [docs/kubernetes-helm.md](docs/kubernetes-helm.md) |
+| Qdrant, PostgreSQL e informe de uso | [docs/usage-reports.md](docs/usage-reports.md) |
+| Presupuestos por tenant (alerta y bloqueo preventivo) | [docs/budget-guardrails.md](docs/budget-guardrails.md) |
 | Políticas propias de OPA | [docs/policies.md](docs/policies.md) |
 | SSO (Entra ID / Okta) y passkeys | [docs/sso.md](docs/sso.md) · [docs/passkeys.md](docs/passkeys.md) |
 | Producción (dominio, TLS, copias, alertas) | [docs/deployment.md](docs/deployment.md) · [docs/email.md](docs/email.md) · [docs/launch-checklist.md](docs/launch-checklist.md) |

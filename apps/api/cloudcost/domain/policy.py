@@ -14,6 +14,7 @@ from .rules import (
     ACTION_REMOVE,
     ACTION_RESIZE,
     ACTION_RIGHTSIZE_WORKLOAD,
+    ADVISORY_ACTIONS,
 )
 
 ALLOWED_ACTIONS = frozenset({ACTION_RESIZE, ACTION_REMOVE, ACTION_DELETE_VOLUME, ACTION_DELETE_SNAPSHOT, ACTION_DELETE_DB,
@@ -50,6 +51,10 @@ def evaluate(*, action: str, risk: str, environment: str | None, confidence: flo
     reasons: list[str] = []
     applied: list[str] = []
 
+    if action in ADVISORY_ACTIONS:           # sin cambio de IaC que generar: se propone con evidencia y se aplica a mano
+        return PolicyDecision(False, cfg.standard_approvals, False, True, True,
+                              ["Recomendación consultiva: no hay un cambio de infraestructura como código que generar; aplícala con la API o el SQL indicados"],
+                              ["ADVISORY_ONLY"])
     if action not in ALLOWED_ACTIONS:
         return PolicyDecision(False, cfg.reinforced_approvals, True, True, True,
                               [f"Acción '{action}' fuera de la allowlist"], ["ACTION_ALLOWLIST"])
