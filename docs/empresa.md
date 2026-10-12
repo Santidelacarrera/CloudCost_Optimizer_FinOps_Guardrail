@@ -1,6 +1,6 @@
 # Empresa
 
-Nota central de la documentación de CloudCost Optimizer FinOps Guardrail. Cada documento enlaza de vuelta aquí con `[[empresa]]`.
+Nota central de la documentación de CloudCost Optimizer FinOps Guardrail, producto de **Nexus Security & AI Lab** (desarrollo web, automatización de procesos, integración de IA, agentes de IA y ciberseguridad). Comparte con el resto de proyectos de la empresa los estándares, la gobernanza y la regla de costo $0. Cada documento enlaza de vuelta aquí con `[[empresa]]`.
 
 ## Documentos
 
@@ -25,3 +25,4 @@ Nota central de la documentación de CloudCost Optimizer FinOps Guardrail. Cada 
 - [[sso]]
 - [[supported-services]]
 - [[usage-reports]]
+- [[bitacora-autonoma-2026-10-12]]

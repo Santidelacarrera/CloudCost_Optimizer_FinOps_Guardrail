@@ -3,6 +3,8 @@
 
 # CloudCost Optimizer & FinOps Guardrail 💸🛡️
 
+*Un producto de **Nexus Security & AI Lab**.*
+
 > **Detecta el desperdicio en tu infraestructura cloud y conviértelo en ahorro mediante un Pull Request. Riesgo cero. Cero permisos de escritura en producción.**
 
 AWS · Azure · GCP · Kubernetes — Terraform · Helm — GitHub · GitLab
@@ -311,6 +313,15 @@ make test                       # pytest
 ```
 
 Sin `DATABASE_URL` / `DATABASE_ADMIN_URL` las pruebas de integración se omiten (las unitarias no necesitan base de datos). Las pruebas de OPA usan el binario real: instala [`opa`](https://www.openpolicyagent.org/docs/latest/#running-opa) para correrlas en local. El front vive en `apps/web` (`npm install && npm run dev`; el e2e con `npx playwright test`).
+
+**Probar los guardrails de presupuesto (sin llamadas reales a AWS)**
+
+```bash
+python -m pytest tests/unit/test_budgets.py tests/integration/test_budgets_db.py \
+    tests/integration/test_budget_guardrail_cost_explorer.py -q     # datos simulados de Cost Explorer; necesita PostgreSQL (ver arriba)
+```
+
+Uso, umbrales y cálculo: [docs/budget-guardrails.md](docs/budget-guardrails.md). Seguridad estática: `pip install bandit pip-audit && bandit -r apps/api -ll && pip-audit -r requirements.txt`.
 
 **Convenciones del repositorio**
 - Una ruta nueva debe clasificarse en `tests/integration/test_route_auth.py`; una tabla nueva debe tener RLS (la prueba por introspección lo exige).
