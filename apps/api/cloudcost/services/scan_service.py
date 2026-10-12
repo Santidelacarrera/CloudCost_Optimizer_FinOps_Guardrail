@@ -264,6 +264,7 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
                     (str(org_id), str(account["id"]), str(scan_id), c.provider, c.account_ref, c.service, c.service_raw, c.region,
                      c.granularity, c.period_start, c.period_end, c.amount, c.currency, c.metric, c.estimated, c.source)
                     for c in result.account_costs])
+        spend = budgets.preflight(conn, org_id, "cloud_spend", 0.0)      # solo alerta: el gasto de la nube ya ocurrió, nada que bloquear
         busy = lifecycle.in_flight(conn, account["id"])
         current_keys: set[str] = set()
         keys_by_resource: dict[str, set[str]] = {}
@@ -290,7 +291,7 @@ def run_scan(org_id: UUID, scan_id: UUID, *, settings: Settings, secrets: Secret
                                          keys_by_resource=keys_by_resource, partial=result.partial, degraded=degraded)
         stats = {"resources_seen": len(result.resources), "reconciliation": reconciled.to_dict(), "findings": len(prepared), "recommendations_created": created,
                  "recommendations_updated": updated, "partial": result.partial, "warnings": warnings[:20],
-                 "issues": result.issues[:20], "data_quality": result.data_quality, "account_cost_rows": len(result.account_costs),
+                 "issues": result.issues[:20], "data_quality": result.data_quality, "account_cost_rows": len(result.account_costs), "cloud_spend_budget": spend.level,
                  "estimated_monthly_savings": round(sum(i.finding.estimated_monthly_savings for i in prepared), 2),
                  "duration_seconds": round(time.monotonic() - started, 2)}
         conn.execute("update scans set status = 'SUCCEEDED', finished_at = now(), stats = %s where id = %s",

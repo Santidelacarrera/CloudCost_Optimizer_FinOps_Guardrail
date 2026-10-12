@@ -75,7 +75,7 @@ def preflight(conn: Connection, org_id: UUID, metric: str, task_cost_usd: float,
     decision = evaluate(policy, spent_usd=spent_this_month(conn, metric, today), task_cost_usd=task_cost_usd, today=today)
     if record_alerts and policy and policy.enabled and decision.level != "ok":
         level = decision.level
-        if level == "exceeded":
+        if level == "exceeded" and metric == "api_usage":                # cloud_spend nunca bloquea ni degrada: su alerta es siempre «exceeded»
             level = "degraded" if decision.degrade else ("blocked" if not decision.allowed else "exceeded")
         _alert(conn, org_id, metric, level, decision, today)
     return decision
