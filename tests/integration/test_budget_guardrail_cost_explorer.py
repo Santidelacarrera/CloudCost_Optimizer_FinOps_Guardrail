@@ -152,6 +152,18 @@ def test_cloud_spend_forecast_uses_simulated_daily_costs():
     assert d.level == "forecast" and d.allowed                               # tarea gratuita: no se bloquea nada
 
 
+def test_scan_raises_a_cloud_spend_alert_but_never_blocks_or_changes_data(monkeypatch):
+    from cloudcost.services import budgets
+    monkeypatch.setattr(budgets, "today_utc", lambda: TODAY)               # el gasto simulado es de octubre de 2026
+    t = new_tenant("ce8b")
+    _budget(t, limit=100, mode="block", metric="cloud_spend")                # modo block: aun así el escaneo termina
+    s = happy_session()
+    out, _ = _scan(t, s)
+    assert out["cloud_spend_budget"] == "exceeded" and out["resources_seen"] > 0
+    assert _levels(t) == ["exceeded"]                                        # 115,5 > 100 → alerta; ni bloqueada ni degradada
+    assert len(_ce_calls(s)) == CE_REQUESTS_PER_SCAN
+
+
 # ----------------------------------------------------------------------------------------------- SOLO alertan, nunca borran
 def test_alerting_deletes_nothing_in_the_platform_or_the_cloud():
     t = new_tenant("ce9")

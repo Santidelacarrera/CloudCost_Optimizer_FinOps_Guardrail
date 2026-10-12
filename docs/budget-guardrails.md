@@ -68,7 +68,7 @@ Lo que hace cada modo está acotado por diseño y por pruebas:
 * **Nunca borra ni desactiva datos.** Un escaneo bloqueado no se ejecuta: no toca recursos, recomendaciones ni costes (prueba `test_block_and_degrade_leave_existing_data_untouched`). El modo `alert` no recorta la tarea (`test_alert_mode_thresholds_for_the_first_scan`).
 * **Nunca escribe en la nube.** El guardrail no importa clientes de nube ni ejecuta procesos (prueba estática) y el colector sigue limitado a la lista cerrada de operaciones de lectura (`aws_guard`); las pruebas comprueban que cada llamada simulada pertenece a ella.
 * **Los datos del guardrail son solo-añadir.** El rol de aplicación no tiene `DELETE` ni `TRUNCATE` sobre `tenant_budgets`, `usage_meter` ni `budget_alerts`, y no puede `UPDATE` el medidor ni las alertas (`test_application_role_cannot_delete_or_truncate_budget_data`).
-* **`cloud_spend` solo informa.** Su estado y previsión se consultan con `GET /budgets` y `POST /budgets/check`; el gasto de la cuenta ya ocurrió, así que no hay nada que "bloquear" en la nube.
+* **`cloud_spend` solo alerta.** Tras cada escaneo se evalúa el gasto observado del mes y, si corresponde, se registra la alerta (`stats.cloud_spend_budget` lo refleja); también se consulta con `GET /budgets` y `POST /budgets/check`. El gasto de la cuenta ya ocurrió, así que aunque el modo sea `block` el escaneo termina y no se toca nada (prueba `test_scan_raises_a_cloud_spend_alert_but_never_blocks_or_changes_data`).
 * **Las recomendaciones destructivas** (p. ej. `DROP INDEX`) siguen siendo texto para revisión humana; el presupuesto no las ejecuta ni las aprueba.
 
 ## Cómo se prueba (sin llamadas reales a AWS)
